@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use bevy_mod_picking::prelude::*;
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
+use bevy_mod_picking::prelude::*;
 
 use hexx::shapes;
 use hexx::*;
@@ -61,10 +61,11 @@ fn setup_grid(
     // let ice_material = asset_server.load("02_Ice.gltf#Material0");
     // let hills_material = asset_server.load("04_Hills.gltf#Material0");
 
-    let mountain_color_texture: Handle<Image> = asset_server.load("mountain/Mountain_Texture.png");
+    let mountain_color_texture: Handle<Image> = asset_server.load("mountain/Mountain Texture.png");
 
     // Meshes
-    let mountain_handle = asset_server.load("mountain/Mountain.gltf#Mesh0/Primitive0");
+    let mountain_handle: Handle<Mesh> =
+        asset_server.load("mountain/Mountain.gltf#Mesh0/Primitive0");
     let ice_handle = asset_server.load("02_Ice.gltf#Mesh0/Primitive0");
     let hills_handle = asset_server.load("04_Hills.gltf#Mesh0/Primitive0");
 
@@ -85,11 +86,11 @@ fn setup_grid(
             if rand_num == 0 {
                 altitude = 0.5;
                 mesh_handle = mountain_handle.clone();
-                // material_handle = asset_server.load("mountain/Mountain.gltf#Material.0");
-                material_handle = materials.add(StandardMaterial {
-                    base_color_texture: Some(asset_server.load("mountain/Mountain_Texture.png")),
-                    ..Default::default()
-                })
+                material_handle = asset_server.load("mountain/Mountain.gltf#Material0");
+                // material_handle = materials.add(StandardMaterial {
+                //     base_color_texture: Some(asset_server.load("mountain/Mountain_Texture.png")),
+                //     ..Default::default()
+                // })
             } else if rand_num == 1 {
                 mesh_handle = ice_handle.clone();
                 material_handle = materials.add(StandardMaterial {
@@ -107,6 +108,8 @@ fn setup_grid(
                 })
             }
 
+            // let gltf_handle = asset_server.load("mountain/Mountain.gltf#Scene0");
+
             let id = commands
                 .spawn((
                     PbrBundle {
@@ -116,6 +119,12 @@ fn setup_grid(
                         material: material_handle.clone(),
                         ..default()
                     },
+                    // SceneBundle {
+                    //     scene: gltf_handle.clone(),
+                    //     transform: Transform::from_xyz(pos.x, altitude, pos.y)
+                    //         .with_scale(Vec3::splat(1.71)),
+                    //     ..Default::default()
+                    // },
                     PickableBundle::default(), // <- Makes the mesh pickable.
                     RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 ))
