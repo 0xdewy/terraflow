@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { version = "0.10.0", features = ["dynamic_linking", "bevy_gltf", "bevy_pbr", "bevy_ui"] }
+bevy = { version = "0.10.0", features = ["dynamic_linking", "bevy_gltf", "bevy_pbr", "jpeg"] }
 bevy_mod_picking = "0.13.0"
 bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera" }
 hexx = "0.6.0"

@@ -3,6 +3,10 @@
 		"generator":"Khronos glTF Blender I/O v3.5.30",
 		"version":"2.0"
 	},
+	"extensionsUsed":[
+		"KHR_materials_specular",
+		"KHR_materials_ior"
+	],
 	"scene":0,
 	"scenes":[
 		{
@@ -15,37 +19,49 @@
 	"nodes":[
 		{
 			"mesh":0,
-			"name":"01 Mountain"
+			"name":"12 Wastes",
+			"translation":[
+				-9,
+				0,
+				0
+			]
 		}
 	],
 	"materials":[
 		{
 			"doubleSided":true,
-			"name":"Mountain",
-			"normalTexture":{
-				"index":0,
-				"scale":4.699999809265137
+			"extensions":{
+				"KHR_materials_specular":{
+					"specularColorFactor":[
+						0.4527136833477069,
+						0.4527136833477069,
+						0.4527136833477069
+					]
+				},
+				"KHR_materials_ior":{
+					"ior":1.4500000476837158
+				}
 			},
+			"name":"Wastes",
 			"pbrMetallicRoughness":{
 				"baseColorTexture":{
-					"index":1
+					"index":0
 				},
-				"metallicFactor":0,
-				"roughnessFactor":0.5
+				"metallicFactor":0.48181816935539246,
+				"roughnessFactor":0.7727272510528564
 			}
 		}
 	],
 	"meshes":[
 		{
-			"name":"Cylinder.006",
+			"name":"Cylinder.017",
 			"primitives":[
 				{
 					"attributes":{
 						"POSITION":0,
-						"TEXCOORD_0":1,
-						"NORMAL":2
+						"NORMAL":1
 					},
-					"indices":3,
+					"indices":2,
 					"material":0
 				}
 			]
@@ -55,32 +71,23 @@
 		{
 			"sampler":0,
 			"source":0
-		},
-		{
-			"sampler":0,
-			"source":1
 		}
 	],
 	"images":[
 		{
-			"mimeType":"image/png",
-			"name":"Mountain Normal",
-			"uri":"Mountain%20Normal.png"
-		},
-		{
-			"mimeType":"image/png",
-			"name":"Mountain Texture",
-			"uri":"Mountain%20Texture.png"
+			"mimeType":"image/jpeg",
+			"name":"Wastes Texture",
+			"uri":"Wastes%20Texture.jpg"
 		}
 	],
 	"accessors":[
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":48,
+			"count":36,
 			"max":[
 				0.866025447845459,
-				1.0499999523162842,
+				0.05000000074505806,
 				1
 			],
 			"min":[
@@ -93,45 +100,33 @@
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":48,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":2,
-			"componentType":5126,
-			"count":48,
+			"count":36,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":3,
+			"bufferView":2,
 			"componentType":5123,
-			"count":66,
+			"count":60,
 			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":576,
+			"byteLength":432,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":384,
-			"byteOffset":576,
+			"byteLength":432,
+			"byteOffset":432,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":576,
-			"byteOffset":960,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":132,
-			"byteOffset":1536,
+			"byteLength":120,
+			"byteOffset":864,
 			"target":34963
 		}
 	],
@@ -143,8 +138,8 @@
 	],
 	"buffers":[
 		{
-			"byteLength":1668,
-			"uri":"Mountain.bin"
+			"byteLength":984,
+			"uri":"Waste.bin"
 		}
 	]
 }

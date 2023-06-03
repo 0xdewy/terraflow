@@ -28,11 +28,6 @@ const HEX_SIZE: Vec2 = Vec2::splat(2.0);
 /// Map radius
 const MAP_RADIUS: u32 = 20;
 
-// #[derive(Resource)]
-// struct Map {
-//     entities: HashMap<Hex, Entity>,
-//     default_material: Handle<StandardMaterial>,
-// }
 #[derive(Resource)]
 struct Map {
     entities: HashMap<Hex, (Entity, Handle<StandardMaterial>)>,
@@ -51,23 +46,15 @@ fn setup_grid(
         ..default()
     };
 
-    // hex mesh
-    // let mesh = hexagonal_column(&layout);
-    // let mesh_handle = meshes.add(mesh);
-    // let default_material = asset_server.load("01_Mountain.gltf#Material0");
-
-    // Materials
-    // let mountain_material = asset_server.load("mountain/Mountain.gltf#Material0");
-    // let ice_material = asset_server.load("02_Ice.gltf#Material0");
-    // let hills_material = asset_server.load("04_Hills.gltf#Material0");
-
-    let mountain_color_texture: Handle<Image> = asset_server.load("mountain/Mountain Texture.png");
-
     // Meshes
     let mountain_handle: Handle<Mesh> =
         asset_server.load("mountain/Mountain.gltf#Mesh0/Primitive0");
-    let ice_handle = asset_server.load("02_Ice.gltf#Mesh0/Primitive0");
+    let waste_handle = asset_server.load("12 Wastes.gltf#Mesh0/Primitive0");
     let hills_handle = asset_server.load("04_Hills.gltf#Mesh0/Primitive0");
+
+
+    // TODO: load assets as resource and use scenes
+    // let gltf_handle = asset_server.load("mountain/Mountain.gltf#Scene0");
 
     // Spawn tiles
     let entities = shapes::hexagon(Hex::ZERO, MAP_RADIUS)
@@ -83,23 +70,16 @@ fn setup_grid(
             let mesh_handle;
             let material_handle;
 
+            // Use random number to choose what tile to create
             if rand_num == 0 {
-                altitude = 0.5;
+                altitude = 0f32;
                 mesh_handle = mountain_handle.clone();
                 material_handle = asset_server.load("mountain/Mountain.gltf#Material0");
-                // material_handle = materials.add(StandardMaterial {
-                //     base_color_texture: Some(asset_server.load("mountain/Mountain_Texture.png")),
-                //     ..Default::default()
-                // })
             } else if rand_num == 1 {
-                mesh_handle = ice_handle.clone();
-                material_handle = materials.add(StandardMaterial {
-                    base_color: Color::WHITE,
-                    metallic: 1.0,
-                    ..Default::default()
-                })
+                mesh_handle = waste_handle.clone();
+                material_handle = asset_server.load("waste/Waste.gltf#Material0");
             } else {
-                altitude = 0.2;
+                altitude = 0f32;
                 mesh_handle = hills_handle.clone();
                 material_handle = materials.add(StandardMaterial {
                     base_color: Color::DARK_GREEN,
@@ -108,13 +88,12 @@ fn setup_grid(
                 })
             }
 
-            // let gltf_handle = asset_server.load("mountain/Mountain.gltf#Scene0");
 
             let id = commands
                 .spawn((
                     PbrBundle {
                         transform: Transform::from_xyz(pos.x, altitude, pos.y)
-                            .with_scale(Vec3::splat(1.71)),
+                            .with_scale(Vec3::splat(2.0)),
                         mesh: mesh_handle.clone(),
                         material: material_handle.clone(),
                         ..default()
