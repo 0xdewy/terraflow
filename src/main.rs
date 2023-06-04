@@ -24,15 +24,19 @@ fn main() {
 
 ////////////////////// GLOBAL ATTRIBUTES /////////////////
 // TODO: should be stored in a resource and used to generate the map
-const ELEVATION: u16 = 15;
+const ELEVATION: f32 = 10.0;
 // Vulcanism -> Spawns mountains
-const VOLCANISM: u16 = 3;
+const VOLCANISM: f32 = 3.0;
+// How many rings to traverse from the volcano to spawn mountains
+const MOUNTAIN_SPREAD: u32 = MAP_RADIUS * 60 / 100;
+// How much to increase the elevation by
+const ELEVATION_INCREMENT: f32 = 0.5;
 // Elevation where sea level is
-const SEA_LEVEL: u16 = 5;
+const SEA_LEVEL: f32 = 5.0;
 // Planet Age
 const PLANET_AGE: u128 = 0;
 // Base Temperature
-const BASE_TEMPERATURE: u16 = 20;
+const BASE_TEMPERATURE: f32 = 20.0;
 
 ////////////////////// GRID //////////////////////
 
@@ -47,55 +51,52 @@ struct Map {
     entities: HashMap<Hex, (Entity, Handle<StandardMaterial>)>,
 }
 
-fn generate_altitude_map(all_hexes: Vec<Hex>) -> HashMap<Hex, u16> {
-    // TODO: should we create a wrappable hex-map?
-    // let wrappable_map = hexx::hex_map::HexMap::new(MAP_RADIUS).with_center(Hex::ZERO);
+// To avoid having a fixed probability, we can make it a function of distance
+// The base probability is 1 when distance is 0 (at the volcano)
+// The probability decreases linearly as the distance increases, down to 0 at the furthest point
 
-    // Randly pick VOLCANISM number of hexes from the map
+fn increment_height(current_height: &mut f32, distance: u32) {
+    let distance_f32 = distance as f32;
+    let probability = 1.0 - (distance_f32 / MOUNTAIN_SPREAD as f32);
+
+    if rand::random::<f32>() < probability {
+        *current_height += ELEVATION_INCREMENT;
+    }
+}
+
+fn generate_altitude_map(all_hexes: &Vec<Hex>) -> HashMap<Hex, f32> {
     let mut rng = rand::thread_rng();
-    let mut shuffled_hexes = all_hexes.clone();
-    shuffled_hexes.shuffle(&mut rng);
-    let volcano_hexes: HashSet<_> = shuffled_hexes
-        .into_iter()
-        .take(VOLCANISM as usize)
+
+    let mut altitude_map: HashMap<Hex, f32> = all_hexes.iter().map(|hex| (*hex, 0.0)).collect();
+
+    // Randomly pick hexes to start elevation gains from
+    let volcano_hexes: Vec<Hex> = all_hexes
+        .choose_multiple(&mut rng, VOLCANISM as usize)
+        .cloned()
         .collect();
 
-    // Create a hashmap of hex grid to altitude. All volcanoes start at 1, everything else 0
-    let mut altitude_map: HashMap<Hex, u16> = all_hexes
-        .into_iter()
-        .map(|hex| match volcano_hexes.contains(&hex) {
-            true => (hex, 1),
-            false => (hex, 0),
-        })
-        .collect();
+    // Set volcano hexes' initial altitude to ELEVATION_INCREMENT
+    for hex in &volcano_hexes {
+        altitude_map.insert(*hex, ELEVATION_INCREMENT);
+    }
 
-    // Loop through all hexes, increasing the height of the volcanism points, and surrounding hexes
-    // The loop should finish once a volcano has reached ELEVATION
-    let mut max_height = 1;
+    let mut max_height = 0.0;
     while max_height < ELEVATION {
-        volcano_hexes.iter().for_each(|hex| {
-            let neighbours = hex.ring(1);
+        for hex in &volcano_hexes {
+            // Update the volcano height
+            increment_height(altitude_map.get_mut(hex).unwrap(), 0);
+            max_height = max_height.max(altitude_map[hex] as f32);
 
-            // Increase the height of the volcano
-            let mut height = altitude_map.get(&hex).unwrap().clone();
-            height += 1;
-            altitude_map.insert(*hex, height);
-
-            // Update max height
-            if height > max_height {
-                max_height = height;
+            // Update the neighbors' heights based on their distance to the volcano
+            for rings_traversed in 1..=MOUNTAIN_SPREAD as u32 {
+                for neighbour in hex.ring(rings_traversed) {
+                    if let Some(height) = altitude_map.get_mut(&neighbour) {
+                        increment_height(height, rings_traversed);
+                        max_height = max_height.max(*height as f32);
+                    }
+                }
             }
-
-            // Increase the height of the neighbours by 1
-            neighbours.into_iter().for_each(|neighbour| {
-                // TODO: add randomness
-                let mut height = altitude_map.get(&neighbour).expect("Failed to find neighbour for hex").clone();
-                height += 1;
-                altitude_map.insert(neighbour, height);
-            });
-
-            // TODO: increase 2nd degree neighbours height with lower odds
-        });
+        }
     }
     altitude_map
 }
@@ -122,13 +123,12 @@ fn setup_grid(
     // let gltf_handle = asset_server.load("mountain/Mountain.gltf#Scene0");
 
     let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, MAP_RADIUS).collect();
-    let altitude_map = generate_altitude_map(all_hexes.clone());
+    let altitude_map = generate_altitude_map(&all_hexes);
 
     // Spawn tiles
     let entities = all_hexes
         .into_iter()
         .map(|hex| {
-            println!("Hex: {:?}", hex);
             // Random generation
             let rand_num = rand::random::<u8>() % 4;
 
@@ -160,7 +160,7 @@ fn setup_grid(
             let id = commands
                 .spawn((
                     PbrBundle {
-                        transform: Transform::from_xyz(pos.x, altitude as f32, pos.y)
+                        transform: Transform::from_xyz(pos.x, altitude, pos.y)
                             .with_scale(Vec3::splat(2.0)),
                         mesh: mesh_handle.clone(),
                         material: material_handle.clone(),
