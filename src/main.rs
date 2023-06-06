@@ -8,10 +8,10 @@ use hexx::*;
 
 use std::collections::HashMap;
 
-mod assets;
+mod tiles;
 mod world;
 
-use world::WorldAttributes;
+use world::{AltitudeGenerator, TemperatureGenerator, TileTypeGenerator, WorldAttributes};
 
 fn main() {
     App::new()
@@ -28,17 +28,21 @@ fn main() {
         .run();
 }
 
-////////////////////// NON CONIGURABLE //////////////////////
-// How many meters per 1.0 elevation change
-// const METERS_PER_ELEVATION: f32 = 500.0;
-
-////////////////////// GRID //////////////////////
-
 // TODO: store tile type + innate attributes instead of the material
 #[derive(Resource)]
 struct Map {
     entities: HashMap<Hex, Entity>,
 }
+
+// pub struct Terrain {
+//     pub tile_type: TileType,
+//     pub altitude: f32,
+//     pub temperature: f32,
+// }
+
+// pub struct TerrainMap {
+//     pub map: HashMap<Hex, Terrain>,
+// }
 
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
@@ -50,12 +54,12 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     let world = WorldAttributes::default();
 
-    let tile_assets = assets::TileAssets::new(&asset_server);
+    let tile_assets = tiles::TileAssets::new(&asset_server);
 
     let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, world::MAP_RADIUS).collect();
 
-    let altitude_map = world.generate_altitude_map(&all_hexes);
-    let temperature_map = world.generate_temperature_map(&altitude_map);
+    let altitude_map = world.altitude.generate_altitude_map(&all_hexes);
+    let temperature_map = world.temperature.generate_temperature_map(&altitude_map);
 
     // Spawn tiles
     let entities = all_hexes
@@ -69,7 +73,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 "latitude {:?}: altitude: {}, temperature: {}",
                 hex.y, altitude, temperature
             );
-            let tile_type = world.tile_from_weather(altitude, temperature);
+            let tile_type = world.from_geography(hex.y as f32, altitude, temperature);
             let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
 
             let id = commands
@@ -81,12 +85,6 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                         material: material_handle,
                         ..default()
                     },
-                    // SceneBundle {
-                    //     transform: Transform::from_xyz(pos.x, altitude, pos.y)
-                    //         .with_scale(Vec3::splat(2.0)),
-                    //     scene: scene_handle.clone(),
-                    //     ..Default::default()
-                    // },
                     PickableBundle::default(), // <- Makes the mesh pickable.
                     RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 ))
@@ -98,11 +96,6 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     commands.insert_resource(Map { entities });
 }
-
-// How to generate the map:
-// generate altitude -> find temperature of every tile based on latitide and altitude
-// change inland oceans to lakes
-// randomly generate the rest for now
 
 // Epoch
 // plot evaporation rates

@@ -1,17 +1,18 @@
 use bevy::prelude::*;
 
+#[derive(Clone, Debug)]
 pub enum TileType {
     Ocean,
     Water,
     Mountain,
-    Hills,
     Grass,
+    Hills,  // Visual changes, but same as grass
     Desert,
     Dirt,
+    Rocky,  // Visual change, but same as dirt
     Forest,
     Ice,
     Jungle,
-    Rocky,
     Swamp,
     Waste,
 }
@@ -104,7 +105,10 @@ impl TileAssets {
         }
     }
 
-    pub fn mesh_and_material(&self, tile_type: &TileType) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    pub fn mesh_and_material(
+        &self,
+        tile_type: &TileType,
+    ) -> (Handle<Mesh>, Handle<StandardMaterial>) {
         match tile_type {
             TileType::Ocean => self.ocean.clone(),
             TileType::Water => self.water.clone(),
@@ -122,39 +126,3 @@ impl TileAssets {
         }
     }
 }
-
-// #[derive(Debug, Clone)]
-// pub struct SceneTileAssets {
-//     pub desert: Handle<Scene>,
-//     pub dirt: Handle<Scene>,
-//     pub forest: Handle<Scene>,
-//     pub grass: Handle<Scene>,
-//     pub hills: Handle<Scene>,
-//     pub ice: Handle<Scene>,
-//     pub jungle: Handle<Scene>,
-//     pub mountain: Handle<Scene>,
-//     pub ocean: Handle<Scene>,
-//     pub rocky: Handle<Scene>,
-//     pub swamp: Handle<Scene>,
-//     pub waste: Handle<Scene>,
-//     pub water: Handle<Scene>,
-// }
-
-// // TODO: Scenes are breaking the picking plugin
-// pub fn _load_tile_assets_scene(asset_server: &Res<AssetServer>) -> SceneTileAssets {
-//     SceneTileAssets {
-//         desert: asset_server.load("tiles/Desert.gltf#Scene0"),
-//         dirt: asset_server.load("tiles/Dirt.gltf#Scene0"),
-//         forest: asset_server.load("tiles/Forest.gltf#Scene0"),
-//         grass: asset_server.load("tiles/Grass.gltf#Scene0"),
-//         hills: asset_server.load("tiles/Hills.gltf#Scene0"),
-//         ice: asset_server.load("tiles/Ice.gltf#Scene0"),
-//         jungle: asset_server.load("tiles/Jungle.gltf#Scene0"),
-//         mountain: asset_server.load("tiles/Mountain.gltf#Scene0"),
-//         ocean: asset_server.load("tiles/Ocean.gltf#Scene0"),
-//         rocky: asset_server.load("tiles/Rocky.gltf#Scene0"),
-//         swamp: asset_server.load("tiles/Swamp.gltf#Scene0"),
-//         waste: asset_server.load("tiles/Waste.gltf#Scene0"),
-//         water: asset_server.load("tiles/Water.gltf#Scene0"),
-//     }
-// }
