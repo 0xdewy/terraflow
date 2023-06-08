@@ -3,15 +3,24 @@ use bevy::prelude::*;
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_picking::prelude::*;
 
+use bevy_egui::{
+    egui::{self, ScrollArea},
+    EguiContexts, EguiPlugin,
+};
+
 use hexx::shapes;
 use hexx::*;
 
 use std::collections::HashMap;
 
+// Local modules
+mod terrain;
 mod tiles;
+mod utils;
 mod world;
 
-use world::{AltitudeGenerator, TemperatureGenerator, TileTypeGenerator, WorldAttributes};
+use terrain::{Terrain, TerrainMap};
+use world::{TileTypeGenerator, WorldAttributes};
 
 fn main() {
     App::new()
@@ -20,29 +29,35 @@ fn main() {
             ..default()
         })
         .add_plugins(DefaultPlugins)
-        .add_plugins(DefaultPickingPlugins)
+        .add_plugins(
+            DefaultPickingPlugins
+                .build()
+                .disable::<DebugPickingPlugin>(),
+        )
         .add_plugin(CameraControllerPlugin)
+        .add_plugin(EguiPlugin)
         .add_startup_system(setup_camera)
         .add_startup_system(setup_grid)
+        .add_startup_system(play_tunes)
+        .add_system(ui_example)
         .add_system(bevy::window::close_on_esc)
         .run();
 }
 
-// TODO: store tile type + innate attributes instead of the material
-#[derive(Resource)]
-struct Map {
-    entities: HashMap<Hex, Entity>,
+fn play_tunes(asset_server: Res<AssetServer>, audio: Res<Audio>) {
+    let music = asset_server.load("music/galactic_steps.wav");
+    audio.play(music);
 }
 
-// pub struct Terrain {
-//     pub tile_type: TileType,
-//     pub altitude: f32,
-//     pub temperature: f32,
-// }
-
-// pub struct TerrainMap {
-//     pub map: HashMap<Hex, Terrain>,
-// }
+// Info box
+// TODO: learn how to show Pickable::Click events here
+fn ui_example(mut egui_contexts: EguiContexts) {
+    egui::Window::new("Terraflow").show(egui_contexts.ctx_mut(), |ui| {
+        ScrollArea::both().auto_shrink([true; 2]).show(ui, |ui| {
+            ui.heading("TODO: show Terrain attributes here");
+        });
+    });
+}
 
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
@@ -52,30 +67,33 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         ..default()
     };
 
-    let world = WorldAttributes::default();
+    let world = WorldAttributes::new();
 
+    // load all gltf files from assets folder
     let tile_assets = tiles::TileAssets::new(&asset_server);
 
+    // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, world::MAP_RADIUS).collect();
 
+    // generate altitude and derive temperature from that
     let altitude_map = world.altitude.generate_altitude_map(&all_hexes);
     let temperature_map = world.temperature.generate_temperature_map(&altitude_map);
 
     // Spawn tiles
-    let entities = all_hexes
+    let map: HashMap<Hex, Terrain> = all_hexes
         .into_iter()
         .map(|hex| {
-            // Hex position and altitude
-            let pos = layout.hex_to_world_pos(hex);
             let altitude = altitude_map.get(&hex).unwrap().clone();
             let temperature = temperature_map.get(&hex).unwrap().clone();
-            println!(
-                "latitude {:?}: altitude: {}, temperature: {}",
-                hex.y, altitude, temperature
-            );
-            let tile_type = world.from_geography(hex.y as f32, altitude, temperature);
+
+            // spawn tile based on altitude and temperature
+            let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
             let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
 
+            // hex -> world position
+            let pos = layout.hex_to_world_pos(hex);
+
+            // create terrain entity
             let id = commands
                 .spawn((
                     PbrBundle {
@@ -87,14 +105,40 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                     },
                     PickableBundle::default(), // <- Makes the mesh pickable.
                     RaycastPickTarget::default(), // <- Needed for the raycast backend.
+                    OnPointer::<Click>::run_callback(terrain_callback),
                 ))
                 .id();
 
-            (hex, id)
+            (hex, Terrain::new(id, hex, tile_type, altitude, temperature))
         })
         .collect();
 
-    commands.insert_resource(Map { entities });
+    let entity_map = map
+        .iter()
+        .map(|(hex, terrain)| (terrain.entity, *hex))
+        .collect();
+
+    commands.insert_resource(TerrainMap {
+        map,
+        entity_map,
+        world_attributes: world,
+    });
+}
+
+fn terrain_callback(
+    // The first parameter is always the `ListenedEvent`, passed in by the event listening system.
+    In(event): In<ListenedEvent<Click>>,
+    terrain: Res<TerrainMap>,
+) -> Bubble {
+    println!("Clicked terrain");
+    println!(
+        "Terrain: {:?}",
+        terrain.entity_map.get(&event.target).unwrap()
+    );
+
+    let hex = terrain.entity_map.get(&event.target).unwrap();
+    println!("Terrain Attributes: {:?}", terrain.map.get(&hex).unwrap());
+    Bubble::Up
 }
 
 // Epoch
@@ -103,8 +147,8 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 //  ---> where does it move on? is this also random?
 
 ////////////////////// CAMERA MOVEMENT //////////////////////
-///
-/// /// 3D Orthogrpahic camera setup
+
+// 3D Orthogrpahic camera setup
 fn setup_camera(mut commands: Commands) {
     let transform = Transform::from_xyz(0.0, 60.0, 60.0).looking_at(Vec3::ZERO, Vec3::Y);
     commands.spawn((

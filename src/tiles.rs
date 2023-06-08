@@ -16,21 +16,6 @@ pub enum TileType {
     Swamp,
     Waste,
 }
-
-pub struct Ocean;
-pub struct Water;
-pub struct Mountain;
-pub struct Hills;
-pub struct Grass;
-pub struct Desert;
-pub struct Dirt;
-pub struct Forest;
-pub struct Ice;
-pub struct Jungle;
-pub struct Rocky;
-pub struct Swamp;
-pub struct Waste;
-
 pub struct TileAssets {
     pub desert: (Handle<Mesh>, Handle<StandardMaterial>),
     pub dirt: (Handle<Mesh>, Handle<StandardMaterial>),
