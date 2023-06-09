@@ -4,9 +4,10 @@ use hexx::*;
 use super::tiles::TileType;
 use super::world::WorldAttributes;
 
-use std::collections::HashMap;
+use std::{cmp::max, collections::HashMap};
 
 pub const EROSION_FACTOR: f32 = 0.5;
+pub const EROSION_SCALE: f32 = 0.1;
 pub const PRECIPITATION_FACTOR: f32 = 0.5;
 
 #[derive(Resource, Clone)]
@@ -46,6 +47,7 @@ pub struct Terrain {
     pub humidity: f32,
     pub soil: f32,
 }
+
 impl Terrain {
     pub fn new(
         entity: Entity,
@@ -60,12 +62,13 @@ impl Terrain {
             tile_type: tile_type.clone(),
             altitude,
             temperature,
-            pollution: 0.0,
+            pollution: tile_type.default_pollution(),
             ground_water: tile_type.default_ground_water(),
             humidity: tile_type.default_humidity(),
             soil: tile_type.default_soil(),
         }
     }
+
     pub fn fertility(&self) -> f32 {
         return self.soil + self.humidity - self.pollution;
     }
@@ -81,6 +84,8 @@ impl Terrain {
         return self.soil;
     }
 
+    // TODO: mountains will run out of soil, should volcanoes add soil?
+    // TODO: save volcano points and produce soil from them + raise elevation
     pub fn erosion_rate(&self, overflow: f32) -> f32 {
         if overflow > 0.0 {
             return EROSION_FACTOR * (1.0 - self.soil) * overflow;
@@ -100,23 +105,32 @@ impl Terrain {
         return (self.humidity - self.temperature) * PRECIPITATION_FACTOR;
     }
 
-    // Runs every game loop
     pub fn epoch(&mut self, neighbours: &mut Vec<Terrain>) {
         self.humidity = self.humidity - self.precipitation(neighbours) + self.evaporation();
-        // const overflow = groundwater - this.overflowLevel();
-        // const erosion = this.erosionRate(overflow);
-        // if (erosion <= soil) {
-        //         soil = soil - erosion;
-        // } else {
-        //         erosion = erosion - soil;
-        //         soil = 0;
-        //         altitude = altitude - (erosion * erosionScale);
-        // }
-        // groundwater = groundwater - overflow;
-        // const lowerNeighbours = neighbours.filter(neighbour => neighbour.altitude < altitude)
-        // const overflowShare = overflow/lowerNeighbours.length // TODO: maybe want unique share for each lower neighbour
-        // const erosionShare = erosion/lowerNeighbours.length;
-        // lowerNeighbours.map(neighbour => neighbour.updateDeposits(overflowShare, erosionShare))
+        let overflow = self.ground_water - self.overflow_level();
+
+        let mut erosion = self.erosion_rate(overflow);
+        let erosion_effect_on_soil = self.soil.min(erosion);
+        self.soil = (self.soil - erosion_effect_on_soil).max(0.0);
+        erosion -= erosion_effect_on_soil;
+
+        self.altitude -= erosion * EROSION_SCALE;
+        self.ground_water -= overflow;
+
+        let mut lower_neighbours: Vec<&mut Terrain> = neighbours
+            .iter_mut()
+            .filter(|neighbour| neighbour.altitude < self.altitude)
+            .collect();
+        let lower_neighbours_count = lower_neighbours.len() as f32; // assuming f32 for arithmetic operations
+
+        // TODO: create a modifier so lower elevation neighbours get more deposits
+        let overflow_share = overflow / lower_neighbours_count;
+        let erosion_share = erosion / lower_neighbours_count;
+
+        lower_neighbours
+            .iter_mut()
+            .for_each(|neighbour| neighbour.update_deposits(overflow_share, erosion_share));
+        // TODO: handle tile changes (e.g. desertification, flooding, etc.)
     }
 }
 
@@ -125,6 +139,7 @@ pub trait TerrainDefaults {
     fn default_ground_water(&self) -> f32;
     fn default_humidity(&self) -> f32;
     fn default_soil(&self) -> f32;
+    fn default_pollution(&self) -> f32;
 }
 
 impl TerrainDefaults for TileType {
@@ -150,18 +165,26 @@ impl TerrainDefaults for TileType {
         }
     }
 
+    fn default_pollution(&self) -> f32 {
+        match self {
+            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 0.0,
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.0,
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.0,
+            TileType::Waste => 1.0,
+        }
+    }
+
     fn default_soil(&self) -> f32 {
         match self {
             TileType::Grass
             | TileType::Hills
             | TileType::Forest
             | TileType::Jungle
-            | TileType::Swamp
-            | TileType::Dirt
-            | TileType::Rocky => 1.0,
+            | TileType::Swamp => 1.0,
             TileType::Ocean | TileType::Water => 0.2,
-            TileType::Mountain | TileType::Ice => 0.5,
-            TileType::Desert | TileType::Waste => 0.2,
+            TileType::Mountain | TileType::Ice => 0.0,
+            TileType::Desert | TileType::Waste => 0.3,
+            TileType::Rocky | TileType::Dirt => 0.1,
         }
     }
 }

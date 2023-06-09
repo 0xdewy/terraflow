@@ -26,9 +26,9 @@ impl AltitudeAttributes {
     pub fn new() -> Self {
         Self {
             highest_elevation: 10.0,
-            vulcanism: 5.0,
-            mountain_spread: MAP_RADIUS * 50 / 100,
-            elevation_increment: 0.01,
+            vulcanism: 6.0,
+            mountain_spread: MAP_RADIUS * 60 / 100,
+            elevation_increment: 0.1,
             sea_level: 1.0,
         }
     }
