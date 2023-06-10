@@ -22,12 +22,16 @@ mod world;
 use terrain::{Terrain, TerrainMap};
 use world::{TileTypeGenerator, WorldAttributes};
 
+#[derive(Resource)]
+pub struct TurnTimer(Timer);
+
 fn main() {
     App::new()
         .insert_resource(AmbientLight {
             brightness: 0.1,
             ..default()
         })
+        .insert_resource(TurnTimer(Timer::from_seconds(1.0, TimerMode::Repeating)))
         .add_plugins(DefaultPlugins)
         .add_plugins(
             DefaultPickingPlugins
@@ -40,6 +44,7 @@ fn main() {
         .add_startup_system(setup_grid)
         .add_startup_system(play_tunes)
         .add_system(ui_example)
+        .add_system(run_epoch)
         .add_system(bevy::window::close_on_esc)
         .run();
 }
@@ -57,6 +62,19 @@ fn ui_example(mut egui_contexts: EguiContexts) {
             ui.heading("TODO: show Terrain attributes here");
         });
     });
+}
+
+fn run_epoch(
+    time: Res<Time>,
+    mut timer: ResMut<TurnTimer>,
+    mut terrain: ResMut<TerrainMap>,
+) {
+    if timer.0.tick(time.delta()).just_finished() {
+        terrain.epoch();
+        // TODO: save asset materials and meshes in TerrainMap
+        // TODO: take assets as parameter
+        // TODO: update entity with new mesh and material if terrain type changes
+    }
 }
 
 /// Hex grid setup
@@ -140,11 +158,6 @@ fn terrain_callback(
     println!("Terrain Attributes: {:?}", terrain.map.get(&hex).unwrap());
     Bubble::Up
 }
-
-// Epoch
-// plot evaporation rates
-// probability that humidity becomes rainfall, otherwise it moves on (mountains force rainfall)
-//  ---> where does it move on? is this also random?
 
 ////////////////////// CAMERA MOVEMENT //////////////////////
 

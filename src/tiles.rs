@@ -1,21 +1,78 @@
 use bevy::prelude::*;
 
-#[derive(Clone, Debug)]
+const CERTAIN: f32 = 1.0;
+const HIGH_ODDS: f32 = 0.8;
+const MED_ODDS: f32 = 0.5;
+const LOW_ODDS: f32 = 0.2;
+
+#[derive(Clone, Debug, Copy)]
 pub enum TileType {
     Ocean,
     Water,
     Mountain,
     Grass,
-    Hills,  // Visual changes, but same as grass
+    Hills, // Visual changes, but same as grass
     Desert,
     Dirt,
-    Rocky,  // Visual change, but same as dirt
+    Rocky, // Visual change, but same as dirt
     Forest,
     Ice,
     Jungle,
     Swamp,
     Waste,
 }
+
+impl TileType {
+    // // 1.0 = everything escapes, 0.0 = nothing escapes
+    pub fn precipitation_factor(&self) -> f32 {
+        match self {
+            TileType::Ocean | TileType::Water => 0.1,
+            TileType::Dirt | TileType::Desert | TileType::Waste => 0.2,
+            TileType::Swamp => 0.2,
+            TileType::Ice | TileType::Grass | TileType::Forest => 0.5,
+            TileType::Hills | TileType::Rocky | TileType::Jungle => 0.7,
+            TileType::Mountain => 0.9,
+        }
+    }
+
+    pub fn exceeds_humidity(&self, humidity: f32) -> bool {
+        match self {
+            TileType::Ocean | TileType::Water => false,
+            TileType::Waste => false,
+            TileType::Swamp | TileType::Jungle => humidity > HIGH_HUMIDITY,
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => {
+                humidity > LOW_HUMIDITY
+            }
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => {
+                humidity < LOW_HUMIDITY
+            }
+        }
+    }
+}
+
+trait HumidityEffects: Sized {
+    fn apply(&self, humidity: f32) -> Vec<(Self, f32)>;
+}
+
+impl HumidityEffects for TileType {
+    fn apply(&self, humidity: f32) -> Vec<(TileType, f32)> {
+        if self.exceeds_humidity(humidity) {
+            match self {
+                TileType::Waste => return vec![(TileType::Swamp, LOW_ODDS)],
+                TileType::Swamp | TileType::Jungle => return vec![(TileType::Jungle, HIGH_ODDS)],
+                TileType::Grass | TileType::Forest => return vec![(TileType::Jungle, MED_ODDS)],
+                TileType::Dirt | TileType::Desert => return vec![(TileType::Grass, LOW_ODDS)],
+                TileType::Rocky => return vec![(TileType::Hills, LOW_ODDS)],
+                _ => return vec![(*self, CERTAIN)],
+            }
+        }
+        vec![(*self, CERTAIN)]
+    }
+}
+
+const HIGH_HUMIDITY: f32 = 0.8;
+const LOW_HUMIDITY: f32 = 0.2;
+
 pub struct TileAssets {
     pub desert: (Handle<Mesh>, Handle<StandardMaterial>),
     pub dirt: (Handle<Mesh>, Handle<StandardMaterial>),

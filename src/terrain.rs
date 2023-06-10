@@ -1,14 +1,19 @@
 use bevy::prelude::*;
 use hexx::*;
 
+use crate::utils::RandomSelection;
+
 use super::tiles::TileType;
 use super::world::WorldAttributes;
 
 use std::{cmp::max, collections::HashMap};
 
-pub const EROSION_FACTOR: f32 = 0.5;
+pub const EROSION_FACTOR: f32 = 0.05;
 pub const EROSION_SCALE: f32 = 0.1;
-pub const PRECIPITATION_FACTOR: f32 = 0.5;
+pub const PRECIPITATION_FACTOR: f32 = 0.03;
+pub const HUMIDITY_FACTOR: f32 = 0.03;
+pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.1;
+pub const EVAPORATION_FACTOR: f32 = 0.03;
 
 #[derive(Resource, Clone)]
 pub struct TerrainMap {
@@ -19,6 +24,7 @@ pub struct TerrainMap {
 
 impl TerrainMap {
     pub fn epoch(&mut self) {
+        // TODO: this is probably wasteful, can we mutate it as a reference?
         let mut new_map = self.map.clone(); // Cloning the map to operate on
 
         for (hex, terrain) in new_map.iter_mut() {
@@ -35,7 +41,7 @@ impl TerrainMap {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Terrain {
     pub entity: Entity,
     pub coordinates: Hex,
@@ -69,6 +75,44 @@ impl Terrain {
         }
     }
 
+    pub fn epoch(&mut self, neighbours: &mut Vec<Terrain>) {
+        let precipitation = self.precipitation();
+        self.humidity = self.humidity - precipitation + self.evaporation();
+        self.ground_water += precipitation;
+
+        match self.tile_type {
+            TileType::Ocean | TileType::Water => {}
+            _ => {
+                self.ground_water -= self.evaporation().max(0.0);
+            }
+        }
+
+        // overflow causes erosion
+        let overflow = (self.ground_water - self.overflow_level()).max(0.0);
+        let erosion = self.apply_erosion(overflow);
+
+        // lose soil, altitude and water
+        self.soil = (self.soil - erosion).max(0.0);
+        self.altitude -= erosion * EROSION_SCALE;
+        self.ground_water -= overflow;
+
+        // distribute ground water
+        let mut ground_water_receiver = self.ground_water_receiver(neighbours);
+        ground_water_receiver.update_deposits(overflow, erosion);
+
+        // distribute humidity
+        let humidity_escape_paths = neighbours.get_higher(self.altitude);
+        let odds = humidity_escape_paths.len() as f32 / neighbours.len() as f32;
+        if odds.pick_random() {
+            let amount_humidity = self.humidity * HUMIDITY_TRAVEL_FACTOR;
+            let mut humidity_receiver = self.humidity_receiver(neighbours);
+            humidity_receiver.humidity += amount_humidity;
+            self.humidity -= amount_humidity;
+        }
+
+        // TODO: handle tile changes (e.g. desertification, flooding, etc.)
+    }
+
     pub fn fertility(&self) -> f32 {
         return self.soil + self.humidity - self.pollution;
     }
@@ -76,10 +120,10 @@ impl Terrain {
     // TODO: make temperature a dynamic attribute
     pub fn evaporation(&self) -> f32 {
         // Each tile could have a default value?
-        return self.ground_water * self.temperature;
+        return self.ground_water * self.temperature * EVAPORATION_FACTOR;
     }
 
-    // TODO: should there be a soil factor?
+    // TODO: tiletype should probably influence the overflow level?
     pub fn overflow_level(&self) -> f32 {
         return self.soil;
     }
@@ -87,11 +131,15 @@ impl Terrain {
     // TODO: mountains will run out of soil, should volcanoes add soil?
     // TODO: save volcano points and produce soil from them + raise elevation
     pub fn erosion_rate(&self, overflow: f32) -> f32 {
-        if overflow > 0.0 {
-            return EROSION_FACTOR * (1.0 - self.soil) * overflow;
-        } else {
-            return 0.0;
-        }
+        // will return 0 if there is no overflow
+        return EROSION_FACTOR * (1.0 - self.soil) * overflow;
+    }
+
+    pub fn apply_erosion(&self, overflow: f32) -> f32 {
+        let mut erosion = self.erosion_rate(overflow);
+        let erosion_effect_on_soil = self.soil.min(erosion);
+        erosion -= erosion_effect_on_soil;
+        erosion
     }
 
     pub fn update_deposits(&mut self, overflow: f32, erosion: f32) {
@@ -99,42 +147,69 @@ impl Terrain {
         self.soil += erosion;
     }
 
-    pub fn precipitation(&self, neighbours: &Vec<Terrain>) -> f32 {
-        // TODO: update humidity of higher neighbours
-        // TODO: get the highest neighbour
-        return (self.humidity - self.temperature) * PRECIPITATION_FACTOR;
+    pub fn precipitation(&self) -> f32 {
+        if self.tile_type.precipitation_factor().pick_random() {
+            return self.humidity * PRECIPITATION_FACTOR;
+        }
+
+        0.0
     }
 
-    pub fn epoch(&mut self, neighbours: &mut Vec<Terrain>) {
-        self.humidity = self.humidity - self.precipitation(neighbours) + self.evaporation();
-        let overflow = self.ground_water - self.overflow_level();
+    // Returns the proportion (percentage) of the overflow/erosion that each neighbour will receive
+    fn ground_water_receiver(&self, neighbours: &Vec<Terrain>) -> Terrain {
+        let lower_neighbours = neighbours.get_lower(self.altitude);
 
-        let mut erosion = self.erosion_rate(overflow);
-        let erosion_effect_on_soil = self.soil.min(erosion);
-        self.soil = (self.soil - erosion_effect_on_soil).max(0.0);
-        erosion -= erosion_effect_on_soil;
+        if lower_neighbours.is_empty() {
+            return neighbours.pick_random();
+        }
 
-        self.altitude -= erosion * EROSION_SCALE;
-        self.ground_water -= overflow;
+        let odds_array = lower_neighbours
+            .iter()
+            .map(|neighbour| (neighbour.clone(), self.altitude - neighbour.altitude))
+            .collect::<Vec<(Terrain, f32)>>();
 
-        let mut lower_neighbours: Vec<&mut Terrain> = neighbours
-            .iter_mut()
-            .filter(|neighbour| neighbour.altitude < self.altitude)
-            .collect();
-        let lower_neighbours_count = lower_neighbours.len() as f32; // assuming f32 for arithmetic operations
+        odds_array.pick_random()
+    }
 
-        // TODO: create a modifier so lower elevation neighbours get more deposits
-        let overflow_share = overflow / lower_neighbours_count;
-        let erosion_share = erosion / lower_neighbours_count;
+    fn humidity_receiver(&self, neighbours: &Vec<Terrain>) -> Terrain {
+        let higher_neighbours = neighbours.get_higher(self.altitude);
 
-        lower_neighbours
-            .iter_mut()
-            .for_each(|neighbour| neighbour.update_deposits(overflow_share, erosion_share));
-        // TODO: handle tile changes (e.g. desertification, flooding, etc.)
+        if higher_neighbours.is_empty() {
+            return neighbours.pick_random();
+        }
+
+        // Higher altitude difference should increase odds that humidity goes there
+        let odds_array = higher_neighbours
+            .iter()
+            .map(|neighbour| (neighbour.clone(), neighbour.altitude - self.altitude))
+            .collect::<Vec<(Terrain, f32)>>();
+
+        odds_array.pick_random()
+    }
+}
+
+pub trait Altitude {
+    fn get_higher(&self, altitude: f32) -> Self;
+    fn get_lower(&self, altitude: f32) -> Self;
+}
+
+impl Altitude for Vec<Terrain> {
+    fn get_higher(&self, altitude: f32) -> Self {
+        self.iter()
+            .filter(|terrain| terrain.altitude > altitude)
+            .cloned()
+            .collect()
+    }
+    fn get_lower(&self, altitude: f32) -> Self {
+        self.iter()
+            .filter(|terrain| terrain.altitude < altitude)
+            .cloned()
+            .collect()
     }
 }
 
 ///////////////////////////////////////// Terrain Defaults ////////////////////////////////////////////////
+// TODO: implement in TileType directly
 pub trait TerrainDefaults {
     fn default_ground_water(&self) -> f32;
     fn default_humidity(&self) -> f32;
