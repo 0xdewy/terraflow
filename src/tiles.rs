@@ -23,6 +23,51 @@ pub enum TileType {
 }
 
 impl TileType {
+    pub fn default_ground_water(&self) -> f32 {
+        match self {
+            TileType::Ocean | TileType::Water | TileType::Swamp => 1.0,
+            TileType::Ice
+            | TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle => 0.7,
+            TileType::Dirt | TileType::Rocky => 0.5,
+            TileType::Mountain | TileType::Desert | TileType::Waste => 0.2,
+        }
+    }
+
+    pub fn default_humidity(&self) -> f32 {
+        match self {
+            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0,
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7,
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5,
+            TileType::Waste => 0.2,
+        }
+    }
+
+    pub fn default_pollution(&self) -> f32 {
+        match self {
+            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 0.0,
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.0,
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.0,
+            TileType::Waste => 1.0,
+        }
+    }
+
+    pub fn default_soil(&self) -> f32 {
+        match self {
+            TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle
+            | TileType::Swamp => 1.0,
+            TileType::Ocean | TileType::Water => 0.2,
+            TileType::Mountain | TileType::Ice => 0.0,
+            TileType::Desert | TileType::Waste => 0.3,
+            TileType::Rocky | TileType::Dirt => 0.1,
+        }
+    }
+
     // // 1.0 = everything escapes, 0.0 = nothing escapes
     pub fn precipitation_factor(&self) -> f32 {
         match self {
@@ -50,6 +95,9 @@ impl TileType {
     }
 }
 
+const HIGH_HUMIDITY: f32 = 0.8;
+const LOW_HUMIDITY: f32 = 0.2;
+
 trait HumidityEffects: Sized {
     fn apply(&self, humidity: f32) -> Vec<(Self, f32)>;
 }
@@ -70,9 +118,7 @@ impl HumidityEffects for TileType {
     }
 }
 
-const HIGH_HUMIDITY: f32 = 0.8;
-const LOW_HUMIDITY: f32 = 0.2;
-
+#[derive(Resource, Default, Clone)]
 pub struct TileAssets {
     pub desert: (Handle<Mesh>, Handle<StandardMaterial>),
     pub dirt: (Handle<Mesh>, Handle<StandardMaterial>),
