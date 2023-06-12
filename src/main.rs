@@ -79,6 +79,16 @@ pub struct Neighbours {
     pub ids: Vec<Entity>,
 }
 
+#[derive(Debug, Clone, Component)]
+pub struct HigherNeighbours {
+    pub ids: Vec<(Entity, f32)>,
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct LowerNeighbours {
+    pub ids: Vec<(Entity, f32)>,
+}
+
 /////////////////////////////////Weather Systems//////////////////////////////////////////////////
 
 #[derive(Default, Resource)]
@@ -103,7 +113,7 @@ fn evaporation_system(mut query: Query<(&WaterElevation, &mut Humidity, &Tempera
     }
 }
 
-fn overflow_system(
+fn calculate_overflow_system(
     mut query: Query<(
         Entity,
         &SoilElevation,
@@ -112,10 +122,56 @@ fn overflow_system(
         &TileType,
     )>,
 ) {
-    for (entity, soil_elevation, water_elevation, mut overflow, tiletype) in query.iter_mut() {
-        // Calculate overflow - overflow.value is the height of the water above the soil
-        // Note: oceans are not allowed to overflow
+    for (_entity, soil_elevation, water_elevation, mut overflow, tiletype) in query.iter_mut() {
         overflow.value += tiletype.overflow_amount(water_elevation.value, soil_elevation.value);
+    }
+}
+
+fn calculate_neighbour_heights_system(
+    mut query: Query<(
+        Entity,
+        &BedrockElevation,
+        &Neighbours,
+        &WaterElevation,
+        &SoilElevation,
+        &mut LowerNeighbours,
+        &mut HigherNeighbours,
+    )>,
+    neighbour_query: Query<(&BedrockElevation, &WaterElevation, &SoilElevation)>,
+) {
+    for (
+        _entity,
+        elevation,
+        neighbours,
+        water_level,
+        soil_level,
+        mut lower_neighbours,
+        mut higher_neighbours,
+    ) in query.iter_mut()
+    {
+        let this_entity_height = elevation.value + water_level.value + soil_level.value;
+
+        // Reset the lists of lower and higher neighbours
+        lower_neighbours.ids.clear();
+        higher_neighbours.ids.clear();
+
+        for neighbour_id in &neighbours.ids {
+            if let Ok((neighbour_elevation, neighbour_water, neighbour_soil)) =
+                neighbour_query.get(*neighbour_id)
+            {
+                let neighbour_height =
+                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
+
+                // Add the neighbour to the appropriate list
+                if neighbour_height < this_entity_height {
+                    lower_neighbours.ids.push((*neighbour_id, neighbour_height));
+                } else if neighbour_height > this_entity_height {
+                    higher_neighbours
+                        .ids
+                        .push((*neighbour_id, neighbour_height));
+                }
+            }
+        }
     }
 }
 
@@ -123,34 +179,21 @@ fn redistribute_overflow_system(
     mut ground_water_updates: ResMut<GroundWaterUpdates>,
     mut query: Query<(
         Entity,
-        &BedrockElevation,
-        &Neighbours,
         &mut Overflow,
         &mut WaterElevation,
         &mut SoilElevation,
+        &mut BedrockElevation,
+        &LowerNeighbours,
     )>,
-    neighbour_query: Query<(&BedrockElevation, &WaterElevation, &SoilElevation)>,
 ) {
-    for (_entity, elevation, neighbours, mut overflow, mut water_level, mut soil_level) in
-        query.iter_mut()
-    {
-        let this_entity_height = elevation.value + water_level.value + soil_level.value;
+    for (_entity, mut overflow, mut water_level, soil_level, bedrock_level, lower_neighbours) in query.iter_mut() {
+        let this_entity_height = bedrock_level.value + water_level.value + soil_level.value;
 
         // Get the total altitude difference with lower neighbours
-        let total_difference: f32 = neighbours
+        let total_difference: f32 = lower_neighbours
             .ids
             .iter()
-            .filter_map(|neighbour_id| neighbour_query.get(*neighbour_id).ok())
-            .filter(|(neighbour_elevation, neighbour_water, neighbour_soil)| {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
-                neighbour_height < this_entity_height
-            })
-            .map(|(neighbour_elevation, neighbour_water, neighbour_soil)| {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
-                (this_entity_height - neighbour_height).max(0.0)
-            })
+            .map(|(_, neighbour_height)| (this_entity_height - neighbour_height).max(0.0))
             .sum();
 
         // If there are no lower neighbours, add the overflow to the water level
@@ -161,47 +204,19 @@ fn redistribute_overflow_system(
         }
 
         // Calculate the overflow for each neighbour
-        let num_lower_neighbours = neighbours
-            .ids
-            .iter()
-            .filter_map(|neighbour_id| neighbour_query.get(*neighbour_id).ok())
-            .filter(|(neighbour_elevation, neighbour_water, neighbour_soil)| {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
-                neighbour_height < this_entity_height
-            })
-            .count() as f32;
+        let num_lower_neighbours = lower_neighbours.ids.len() as f32;
 
         assert!(num_lower_neighbours > 0.0);
 
-        for neighbour_id in &neighbours.ids {
-            if let Ok((neighbour_elevation, neighbour_water, neighbour_soil)) =
-                neighbour_query.get(*neighbour_id)
-            {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
+        for &(neighbour_id, neighbour_height) in &lower_neighbours.ids {
+            let difference = (this_entity_height - neighbour_height).max(0.0);
+            let proportion = difference / total_difference;
+            let overflow_for_neighbour = overflow.value * proportion;
 
-                if neighbour_height < this_entity_height {
-                    let difference = (this_entity_height - neighbour_height).max(0.0);
-                    let proportion = difference / total_difference;
-                    let overflow_for_neighbour = overflow.value * proportion;
+            *ground_water_updates.0.entry(neighbour_id).or_insert(0.0) += overflow_for_neighbour;
 
-                    *ground_water_updates.0.entry(*neighbour_id).or_insert(0.0) +=
-                        overflow_for_neighbour;
-
-                    overflow.value -= overflow_for_neighbour;
-                }
-            }
-        }
-
-        // If there's any remaining overflow due to rounding errors, distribute it evenly
-        if overflow.value > 0.0 {
-            let overflow_per_neighbour = overflow.value / num_lower_neighbours;
-            for neighbour_id in &neighbours.ids {
-                *ground_water_updates.0.entry(*neighbour_id).or_insert(0.0) +=
-                    overflow_per_neighbour;
-            }
-            overflow.value = 0.0;
+            overflow.value -= overflow_for_neighbour;
+            water_level.value -= overflow_for_neighbour;
         }
     }
 }
@@ -237,6 +252,7 @@ pub struct HexToEntity(HashMap<Hex, Entity>);
 pub enum GroundWaterSystemSet {
     EpochStart,
     LocalWeather,
+    TerrainAnalysis,
     RedistributeOverflow,
     ApplyWaterOverflow,
 }
@@ -270,14 +286,23 @@ fn main() {
                 .in_schedule(CoreSchedule::FixedUpdate),
         )
         .add_systems(
-            (precipitation_system, evaporation_system, overflow_system)
+            (
+                precipitation_system,
+                evaporation_system,
+                calculate_overflow_system,
+            )
                 .in_set(GroundWaterSystemSet::LocalWeather)
                 .after(GroundWaterSystemSet::EpochStart),
         )
         .add_system(
+            calculate_neighbour_heights_system
+                .in_set(GroundWaterSystemSet::TerrainAnalysis)
+                .after(GroundWaterSystemSet::LocalWeather),
+        )
+        .add_system(
             redistribute_overflow_system
                 .in_set(GroundWaterSystemSet::RedistributeOverflow)
-                .after(GroundWaterSystemSet::LocalWeather),
+                .after(GroundWaterSystemSet::TerrainAnalysis),
         )
         .add_system(
             apply_water_overflow
@@ -350,6 +375,8 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 Temperature { value: temperature },
                 Overflow { value: 0.0 }, // TODO: should this be calculated before epoch?
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
+                LowerNeighbours { ids: vec![] }, // populate once weather has run
+                HigherNeighbours { ids: vec![] }, // populate once weather has run
                 tile_type,
             ))
             .id();
