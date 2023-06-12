@@ -61,12 +61,32 @@ impl TileType {
             | TileType::Forest
             | TileType::Jungle
             | TileType::Swamp => 1.0,
-            TileType::Ocean | TileType::Water => 0.2,
-            TileType::Mountain | TileType::Ice => 0.0,
             TileType::Desert | TileType::Waste => 0.3,
             TileType::Rocky | TileType::Dirt => 0.1,
+            TileType::Ocean | TileType::Water => 0.0,
+            TileType::Mountain | TileType::Ice => 0.0,
         }
     }
+
+    pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => {
+                let water_above_soil = (water_elevation - soil_elevation).max(0.0);
+                return water_above_soil;
+            }
+        }
+    }
+
+    // TODO: deserts evaporate faster?
+    // pub fn evaporation_system(&self, temperature: f32, water_level: f32) -> f32 {
+    //     match self {
+    //         TileType::Ocean | TileType::Water => {
+    //             let evaporation = temperature * water_level;
+    //             return evaporation;
+    //         }
+    //     }
+    // }
 
     // // 1.0 = everything escapes, 0.0 = nothing escapes
     pub fn precipitation_factor(&self) -> f32 {
