@@ -20,15 +20,25 @@ mod utils;
 mod world;
 
 // use terrain::{run_epoch, Neighbors, Terrain};
-use tiles::TileType;
-use utils::RandomSelection;
+
+
 use world::{TileTypeGenerator, WorldAttributes};
 
 #[derive(Resource)]
 pub struct EpochTimer(Timer);
 
 #[derive(Debug, Clone, Component)]
-pub struct Elevation {
+pub struct BedrockElevation {
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct SoilElevation {
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct WaterElevation {
     pub value: f32,
 }
 
@@ -38,17 +48,7 @@ pub struct Humidity {
 }
 
 #[derive(Debug, Clone, Component)]
-pub struct GroundWater {
-    pub value: f32,
-}
-
-#[derive(Debug, Clone, Component)]
 pub struct Overflow {
-    pub value: f32,
-}
-
-#[derive(Debug, Clone, Component)]
-pub struct Erosion {
     pub value: f32,
 }
 
@@ -67,96 +67,103 @@ pub struct Neighbours {
     pub ids: Vec<Entity>,
 }
 
-// The system to handle evaporation
-fn evaporation_system(
-    mut query: Query<(&Elevation, &mut Humidity, &mut GroundWater, &Evaporation)>,
-) {
-    for (elevation, mut humidity, mut ground_water, evaporation) in query.iter_mut() {
-        // Calculate evaporation here
-        // ...
-    }
-}
-
-// The system to handle precipitation
-fn precipitation_system(
-    mut query: Query<(&Elevation, &mut Humidity, &mut GroundWater, &Precipitation)>,
-) {
-    for (elevation, mut humidity, mut ground_water, precipitation) in query.iter_mut() {
-        // Calculate precipitation here
-        // ...
-    }
-}
-
-// The system to handle water overflow
-fn overflow_system(
-    mut query: Query<(&Elevation, &mut GroundWater, &mut Overflow)>,
-    hex_to_entity: Res<HexToEntity>,
-) {
-    for (elevation, mut ground_water, mut overflow) in query.iter_mut() {
-        // Calculate water overflow here
-        // ...
-    }
-}
-
-// The system to handle erosion
-fn erosion_system(
-    mut query: Query<(&Elevation, &mut Overflow, &mut Erosion)>,
-    hex_to_entity: Res<HexToEntity>,
-) {
-    for (elevation, mut overflow, mut erosion) in query.iter_mut() {
-        // Calculate erosion here
-        // ...
-    }
-}
+/////////////////////////////////Weather Systems//////////////////////////////////////////////////
 
 #[derive(Default, Resource)]
 struct GroundWaterUpdates(HashMap<Entity, f32>);
 
-fn calculate_redistribute_overflow_system(
-    mut ground_water_updates: ResMut<GroundWaterUpdates>,
-    query: Query<(Entity, &Elevation, &Neighbours, &GroundWater, &Overflow)>,
-) {
-    ground_water_updates.0.clear();
+fn precipitation_system(mut query: Query<(&Humidity, &mut Precipitation)>) {
+    for (humidity, mut precipitation) in query.iter_mut() {
+        // Calculate precipitation
+        precipitation.value = humidity.value * PRECIPITATION_FACTOR;
+    }
+}
 
-    for (entity, elevation, neighbours, ground_water, overflow) in query.iter() {
+fn evaporation_system(mut query: Query<(&WaterElevation, &mut Humidity)>) {
+    for (water_elevation, mut humidity) in query.iter_mut() {
+        // Calculate evaporation
+        let evaporation = water_elevation.value * EVAPORATION_FACTOR;
+        // Update humidity
+        humidity.value = (humidity.value - evaporation).max(0.0);
+    }
+}
+
+fn overflow_system(
+    mut ground_water_updates: ResMut<GroundWaterUpdates>,
+    mut query: Query<(Entity, &SoilElevation, &WaterElevation, &mut Overflow)>,
+) {
+    for (entity, soil_elevation, water_elevation, mut overflow) in query.iter_mut() {
+        // Calculate overflow - overflow.value is the height of the water above the soil
+        overflow.value += (water_elevation.value - soil_elevation.value).max(0.0);
+        // Update overflow in ground water updates
+        *ground_water_updates.0.entry(entity).or_insert(0.0) += overflow.value;
+    }
+}
+
+fn redistribute_overflow_system(
+    mut ground_water_updates: ResMut<GroundWaterUpdates>,
+    mut query: Query<(
+        Entity,
+        &BedrockElevation,
+        &Neighbours,
+        &mut Overflow,
+        &mut WaterElevation,
+    )>,
+    neighbour_query: Query<(&BedrockElevation,)>,
+) {
+    for (_entity, elevation, neighbours, mut overflow, mut water_level) in query.iter_mut() {
         // Get the total altitude difference with neighbours
         let total_difference: f32 = neighbours
             .ids
             .iter()
-            .filter_map(|neighbour_id| query.get(*neighbour_id).ok())
-            .map(|(_, neighbour_elevation, _, _, _)| {
-                (neighbour_elevation.value - elevation.value).max(0.0)
-            })
+            .filter_map(|neighbour_id| neighbour_query.get(*neighbour_id).ok())
+            .map(|(neighbour_elevation,)| (neighbour_elevation.value - elevation.value).max(0.0))
             .sum();
 
+        // If there are no lower neighbours, add the overflow to the water level
+        if total_difference == 0.0 {
+            water_level.value += overflow.value;
+            overflow.value = 0.0;
+            continue;
+        }
+
         // Calculate the overflow for each neighbour
+        let num_neighbours = neighbours.ids.len() as f32;
         for neighbour_id in &neighbours.ids {
-            if let Ok((_, neighbour_elevation, _, _, _)) = query.get(*neighbour_id) {
+            if let Ok((neighbour_elevation,)) = neighbour_query.get(*neighbour_id) {
                 let difference = (neighbour_elevation.value - elevation.value).max(0.0);
-                println!("Neighbour heigh difference {:?}", difference);
-                let proportion = if total_difference == 0.0 {
-                    0.0
-                } else {
-                    difference / total_difference
-                };
+                let proportion = difference / total_difference;
                 let overflow_for_neighbour = overflow.value * proportion;
-                println!("overflow for neighbour: {:?}", overflow_for_neighbour);
                 *ground_water_updates.0.entry(*neighbour_id).or_insert(0.0) +=
                     overflow_for_neighbour;
+
+                overflow.value -= overflow_for_neighbour;
             }
+        }
+
+        // If there's any remaining overflow due to rounding errors, distribute it evenly
+        if overflow.value > 0.0 {
+            let overflow_per_neighbour = overflow.value / num_neighbours;
+            for neighbour_id in &neighbours.ids {
+                *ground_water_updates.0.entry(*neighbour_id).or_insert(0.0) +=
+                    overflow_per_neighbour;
+            }
+            overflow.value = 0.0;
         }
     }
 }
 
-fn apply_redistribute_overflow_system(
+fn apply_water_overflow(
     ground_water_updates: Res<GroundWaterUpdates>,
-    mut query: Query<(&mut GroundWater, &mut Overflow)>,
+    mut query: Query<&mut WaterElevation>,
 ) {
     for (entity, additional_ground_water) in &ground_water_updates.0 {
-        if let Ok((mut ground_water, mut overflow)) = query.get_mut(*entity) {
-            // println!("Applying ground water overflow: {:?}", &additional_ground_water);
+        if let Ok(mut ground_water) = query.get_mut(*entity) {
+            println!(
+                "Applying ground water overflow: {:?}",
+                &additional_ground_water
+            );
             ground_water.value += *additional_ground_water;
-            overflow.value = 0.0;
         }
     }
 }
@@ -187,9 +194,13 @@ fn main() {
         .add_startup_system(play_tunes)
         .add_system(ui_example)
         .add_system(bevy::window::close_on_esc)
-        .add_system(overflow_system) // New system
-        .add_system(calculate_redistribute_overflow_system)
-        .add_system(apply_redistribute_overflow_system)
+        .add_system(
+            evaporation_system
+                .before(precipitation_system)
+                .before(overflow_system)
+                .before(redistribute_overflow_system)
+                .before(apply_water_overflow),
+        )
         .run();
 }
 
@@ -239,10 +250,19 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 OnPointer::<Click>::run_callback(terrain_callback),
                 // Terrain::new(hex, tile_type, altitude, temperature),
-                Elevation { value: altitude },
-                GroundWater { value: tile_type.default_ground_water() },
-                Overflow { value: 0.0 },
-                Neighbours { ids: vec![] },
+                BedrockElevation { value: altitude },
+                WaterElevation {
+                    value: tile_type.default_ground_water(),
+                },
+                SoilElevation {
+                    value: tile_type.default_soil(),
+                },
+                Humidity {
+                    value: tile_type.default_humidity(),
+                },
+                Overflow { value: 0.0 }, // TODO: should this be calculated before epoch?
+                Neighbours { ids: vec![] }, // populate once all entities are spawned
+                tile_type,
             ))
             .id();
 
@@ -270,14 +290,24 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 fn terrain_callback(
     // The first parameter is always the `ListenedEvent`, passed in by the event listening system.
     In(event): In<ListenedEvent<Click>>,
-    query: Query<(Entity, &GroundWater)>,
+    query: Query<(
+        Entity,
+        &WaterElevation,
+        &SoilElevation,
+        &Overflow,
+        &Humidity,
+    )>,
 ) -> Bubble {
     println!("Clicked terrain");
 
     // Get the entity and its terrain
-    for (entity, ground_water) in query.iter() {
+    for (entity, water_level, soil_level, overflow, humidity) in query.iter() {
         if entity == event.target {
-            println!("Terrain: \n groundwater {:?}", ground_water);
+            println!(
+                "Entity: {:?}, water: {:?}, soil: {:?}, overflow: {:?}, humidity: {:?}",
+                entity, water_level, soil_level, overflow, humidity
+            );
+            println!("\n\n");
             break;
         }
     }
@@ -335,73 +365,3 @@ pub const PRECIPITATION_FACTOR: f32 = 0.03;
 pub const HUMIDITY_FACTOR: f32 = 0.03;
 pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.1;
 pub const EVAPORATION_FACTOR: f32 = 0.03;
-
-// Define components for the different parts of a Terrain
-#[derive(Debug, Clone, Component)]
-pub struct Terrain {
-    pub coordinates: Hex,
-    pub tile_type: TileType,
-    pub altitude: f32,
-    pub temperature: f32,
-    pub pollution: f32,
-    pub ground_water: f32,
-    pub humidity: f32,
-    pub soil: f32,
-}
-
-impl Terrain {
-    pub fn new(coordinates: Hex, tile_type: TileType, altitude: f32, temperature: f32) -> Self {
-        Self {
-            coordinates,
-            tile_type: tile_type.clone(),
-            altitude,
-            temperature,
-            pollution: tile_type.default_pollution(),
-            ground_water: tile_type.default_ground_water(),
-            humidity: tile_type.default_humidity(),
-            soil: tile_type.default_soil(),
-        }
-    }
-
-    pub fn fertility(&self) -> f32 {
-        return self.soil + self.humidity - self.pollution;
-    }
-
-    // TODO: make temperature a dynamic attribute
-    pub fn evaporation(&self) -> f32 {
-        // Each tile could have a default value?
-        return self.ground_water * self.temperature * EVAPORATION_FACTOR;
-    }
-
-    // TODO: tiletype should probably influence the overflow level?
-    pub fn overflow_level(&self) -> f32 {
-        return self.soil;
-    }
-
-    // TODO: mountains will run out of soil, should volcanoes add soil?
-    // TODO: save volcano points and produce soil from them + raise elevation
-    pub fn erosion_rate(&self, overflow: f32) -> f32 {
-        // will return 0 if there is no overflow
-        return EROSION_FACTOR * (1.0 - self.soil) * overflow;
-    }
-
-    pub fn apply_erosion(&self, overflow: f32) -> f32 {
-        let mut erosion = self.erosion_rate(overflow);
-        let erosion_effect_on_soil = self.soil.min(erosion);
-        erosion -= erosion_effect_on_soil;
-        erosion
-    }
-
-    pub fn update_deposits(&mut self, overflow: f32, erosion: f32) {
-        self.ground_water += overflow;
-        self.soil += erosion;
-    }
-
-    pub fn precipitation(&self) -> f32 {
-        if self.tile_type.precipitation_factor().pick_random() {
-            return self.humidity * PRECIPITATION_FACTOR;
-        }
-
-        0.0
-    }
-}

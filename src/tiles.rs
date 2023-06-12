@@ -5,7 +5,7 @@ const HIGH_ODDS: f32 = 0.8;
 const MED_ODDS: f32 = 0.5;
 const LOW_ODDS: f32 = 0.2;
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, Component)]
 pub enum TileType {
     Ocean,
     Water,

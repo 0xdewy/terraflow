@@ -6,7 +6,7 @@ use crate::utils::RandomSelection;
 use super::tiles::TileType;
 use super::world::WorldAttributes;
 
-use std::{cmp::max, collections::HashMap};
+use std::{collections::HashMap};
 
 pub const EROSION_FACTOR: f32 = 0.05;
 pub const EROSION_SCALE: f32 = 0.1;

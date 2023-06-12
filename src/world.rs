@@ -12,7 +12,6 @@ pub const HEX_SIZE: Vec2 = Vec2::splat(2.0);
 /// Map radius
 pub const MAP_RADIUS: u32 = 50;
 
-
 #[derive(Debug, Clone)]
 pub struct AltitudeAttributes {
     pub highest_elevation: f32,
@@ -73,7 +72,6 @@ impl AltitudeAttributes {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct TemperatureAttributes {
