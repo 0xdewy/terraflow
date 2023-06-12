@@ -89,6 +89,40 @@ pub struct LowerNeighbours {
     pub ids: Vec<(Entity, f32)>,
 }
 
+///////////////////////////////// Terrain Morphing /////////////////////////////////////////
+/// Morphs the terrain depending on current weather state
+
+fn morph_terrain_system(
+    mut query: Query<(
+        Entity,
+        &mut Transform,
+        &mut WaterElevation,
+        &mut SoilElevation,
+        &mut BedrockElevation,
+        &TileType,
+    )>,
+) {
+    for (_entity, mut transform, mut water_level, mut soil_level, mut bedrock_level, tile_type) in
+        query.iter_mut()
+    {
+
+        // TODO: setup a system to morph the terrain based on the current weather state
+    }
+}
+
+fn update_terrain_assets(entity: Entity, query: Query<&TileType>, asset_server: Res<AssetServer>, commands: &mut Commands) {
+    let tile_assets = tiles::TileAssets::new(&asset_server);
+    for (tile_type) in query.iter() {
+        let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
+        // update entity with new mesh and material
+        commands.entity(entity).insert(PbrBundle {
+            mesh: mesh_handle,
+            material: material_handle,
+            ..default()
+        });
+    }
+}
+
 /////////////////////////////////Weather Systems//////////////////////////////////////////////////
 
 #[derive(Default, Resource)]
@@ -186,7 +220,9 @@ fn redistribute_overflow_system(
         &LowerNeighbours,
     )>,
 ) {
-    for (_entity, mut overflow, mut water_level, soil_level, bedrock_level, lower_neighbours) in query.iter_mut() {
+    for (_entity, mut overflow, mut water_level, soil_level, bedrock_level, lower_neighbours) in
+        query.iter_mut()
+    {
         let this_entity_height = bedrock_level.value + water_level.value + soil_level.value;
 
         // Get the total altitude difference with lower neighbours
