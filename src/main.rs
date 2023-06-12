@@ -19,9 +19,6 @@ mod tiles;
 mod utils;
 mod world;
 
-// use terrain::{run_epoch, Neighbors, Terrain};
-
-
 use world::{TileTypeGenerator, WorldAttributes};
 
 #[derive(Resource)]
@@ -120,6 +117,7 @@ fn redistribute_overflow_system(
             .map(|(neighbour_elevation,)| (neighbour_elevation.value - elevation.value).max(0.0))
             .sum();
 
+
         // If there are no lower neighbours, add the overflow to the water level
         if total_difference == 0.0 {
             water_level.value += overflow.value;
@@ -159,10 +157,10 @@ fn apply_water_overflow(
 ) {
     for (entity, additional_ground_water) in &ground_water_updates.0 {
         if let Ok(mut ground_water) = query.get_mut(*entity) {
-            println!(
-                "Applying ground water overflow: {:?}",
-                &additional_ground_water
-            );
+            // println!(
+            //     "Applying ground water overflow: {:?}",
+            //     &additional_ground_water
+            // );
             ground_water.value += *additional_ground_water;
         }
     }
@@ -194,13 +192,15 @@ fn main() {
         .add_startup_system(play_tunes)
         .add_system(ui_example)
         .add_system(bevy::window::close_on_esc)
+        .add_system(precipitation_system)
+        .add_system(evaporation_system)
+        .add_system(overflow_system.after((evaporation_system)))
         .add_system(
-            evaporation_system
-                .before(precipitation_system)
-                .before(overflow_system)
-                .before(redistribute_overflow_system)
+            redistribute_overflow_system
+                .after(overflow_system)
                 .before(apply_water_overflow),
         )
+        .add_system(apply_water_overflow)
         .run();
 }
 
