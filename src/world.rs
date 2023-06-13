@@ -6,11 +6,7 @@ use std::collections::HashMap;
 
 use super::tiles::TileType;
 use super::utils::RandomSelection;
-
-/// World size of the hexagons (outer radius)
-pub const HEX_SIZE: Vec2 = Vec2::splat(2.0);
-/// Map radius
-pub const MAP_RADIUS: u32 = 50;
+use super::{MAP_RADIUS, HEX_SIZE};
 
 
 #[derive(Debug, Clone)]
@@ -73,7 +69,6 @@ impl AltitudeAttributes {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct TemperatureAttributes {
