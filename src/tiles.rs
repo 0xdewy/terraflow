@@ -1,3 +1,4 @@
+use super::{Humidity, SoilElevation, Temperature, WaterElevation};
 use bevy::prelude::*;
 
 const CERTAIN: f32 = 1.0;
@@ -99,42 +100,44 @@ impl TileType {
             TileType::Mountain => 0.9,
         }
     }
-
-    pub fn exceeds_humidity(&self, humidity: f32) -> bool {
-        match self {
-            TileType::Ocean | TileType::Water => false,
-            TileType::Waste => false,
-            TileType::Swamp | TileType::Jungle => humidity > HIGH_HUMIDITY,
-            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => {
-                humidity > LOW_HUMIDITY
-            }
-            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => {
-                humidity < LOW_HUMIDITY
-            }
-        }
-    }
 }
 
 const HIGH_HUMIDITY: f32 = 0.8;
 const LOW_HUMIDITY: f32 = 0.2;
 
-trait HumidityEffects: Sized {
-    fn apply(&self, humidity: f32) -> Vec<(Self, f32)>;
+// Returns odds that a tile will change to a different type
+pub trait WeatherEffects: Sized {
+    fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)>;
+    fn exceeds_limit(&self, tile_type: &TileType) -> bool;
 }
 
-impl HumidityEffects for TileType {
-    fn apply(&self, humidity: f32) -> Vec<(TileType, f32)> {
-        if self.exceeds_humidity(humidity) {
-            match self {
+impl WeatherEffects for Humidity {
+    fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
+        if self.exceeds_limit(tile_type) {
+            match tile_type {
                 TileType::Waste => return vec![(TileType::Swamp, LOW_ODDS)],
                 TileType::Swamp | TileType::Jungle => return vec![(TileType::Jungle, HIGH_ODDS)],
                 TileType::Grass | TileType::Forest => return vec![(TileType::Jungle, MED_ODDS)],
                 TileType::Dirt | TileType::Desert => return vec![(TileType::Grass, LOW_ODDS)],
                 TileType::Rocky => return vec![(TileType::Hills, LOW_ODDS)],
-                _ => return vec![(*self, CERTAIN)],
+                _ => return vec![(*tile_type, CERTAIN)],
             }
         }
-        vec![(*self, CERTAIN)]
+        vec![(*tile_type, CERTAIN)]
+    }
+
+    fn exceeds_limit(&self, tile_type: &TileType) -> bool {
+        match tile_type {
+            TileType::Ocean | TileType::Water => false,
+            TileType::Waste => false,
+            TileType::Swamp | TileType::Jungle => self.value > HIGH_HUMIDITY,
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => {
+                self.value > LOW_HUMIDITY
+            }
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => {
+                self.value < LOW_HUMIDITY
+            }
+        }
     }
 }
 

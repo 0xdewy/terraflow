@@ -14,25 +14,79 @@ use hexx::*;
 
 use std::collections::HashMap;
 
-// Local modules
-mod terrain;
 mod tiles;
 mod utils;
 mod world;
 
-use tiles::TileType;
+use tiles::{TileType, WeatherEffects};
+use utils::RandomSelection;
 use world::{TileTypeGenerator, WorldAttributes};
 
-// TODO: add as resource
+//////////////////////////////////////////////// Constants ///////////////////////////////////////////////////
+/// The size of the hexagons in the world map (outer radius). The Vec2::splat(2.0) command creates a
+/// new Vec2 where both elements are 2.0. This size will be applied to all hexagons in the world map.
+pub const HEX_SIZE: Vec2 = Vec2::splat(2.0);
+
+/// The radius of the world map, measured in hexagons. This value determines how large the playable
+/// area will be. A larger radius means a larger world map.
+pub const MAP_RADIUS: u32 = 50;
+
+/// The erosion factor determines how quickly terrain is eroded by water and wind. A higher value
+/// means faster erosion.
 pub const EROSION_FACTOR: f32 = 0.05;
+
+/// The erosion scale is a scalar factor that is used to adjust the scale of the erosion effect.
 pub const EROSION_SCALE: f32 = 0.1;
+
+/// The precipitation factor affects how much rainfall occurs. A higher value means more rainfall.
 pub const PRECIPITATION_FACTOR: f32 = 0.03;
+
+/// The humidity factor determines the overall humidity in the game world. A higher value results in
+/// a more humid environment.
 pub const HUMIDITY_FACTOR: f32 = 0.03;
+
+/// The humidity travel factor influences how fast humidity moves across the game world. Higher
+/// values mean that humidity can travel farther from its original source.
 pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.1;
+
+/// The evaporation factor determines how quickly water evaporates. Higher values lead to faster
+/// evaporation.
 pub const EVAPORATION_FACTOR: f32 = 0.03;
+
+/// The highest possible elevation in the game world. This value represents the maximum height that
+/// terrain can reach.
+pub const HIGHEST_ELEVATION: f32 = 10.0;
+
+/// The vulcanism factor determines the number of volcano spawn points
+/// Surrounding tiles form a general slope around the spawn point
+pub const VULCANISM: f32 = 6.0;
+
+/// The spread of mountain terrain across the game world, as a percentage of the total map radius.
+/// A larger spread means that volcano spawn points will spread further across the map
+pub const MOUNTAIN_SPREAD: f32 = (MAP_RADIUS * 60 / 100) as f32;
+
+/// The increment by which elevation is adjusted. This constant is used when creating the initial
+/// terrain and during terrain modification processes such as erosion and vulcanism.
+pub const ELEVATION_INCREMENT: f32 = 0.1;
+
+/// The sea level of the game world. Terrain with an elevation lower than this value will be
+/// underwater, while terrain with a higher elevation will be above water.
+pub const SEA_LEVEL: f32 = 1.0;
+
+/// Describes the orientation and tile size of a hexagon grid.
+pub fn pointy_layout() -> HexLayout {
+    HexLayout {
+        orientation: HexOrientation::pointy(),
+        hex_size: HEX_SIZE,
+        ..default()
+    }
+}
 
 #[derive(Resource)]
 pub struct EpochTimer(Timer);
+
+#[derive(Debug, Clone, Component)]
+pub struct HexCoordinates(Hex);
 
 #[derive(Debug, Clone, Component)]
 pub struct BedrockElevation {
@@ -99,23 +153,42 @@ fn morph_terrain_system(
         &mut WaterElevation,
         &mut SoilElevation,
         &mut BedrockElevation,
-        &TileType,
+        &Humidity,
+        &mut TileType,
     )>,
 ) {
-    for (_entity, mut transform, mut water_level, mut soil_level, mut bedrock_level, tile_type) in
-        query.iter_mut()
+    for (
+        _entity,
+        mut transform,
+        mut water_level,
+        mut soil_level,
+        mut bedrock_level,
+        humidity,
+        mut tile_type,
+    ) in query.iter_mut()
     {
-
-        // TODO: setup a system to morph the terrain based on the current weather state
+        let tile_probabilities = &humidity.apply_weather(&tile_type);
+        let new_tile = tile_probabilities.pick_random();
+        *tile_type = new_tile;
     }
 }
 
-fn update_terrain_assets(entity: Entity, query: Query<&TileType>, asset_server: Res<AssetServer>, commands: &mut Commands) {
+fn update_terrain_assets(
+    query: Query<(Entity, &TileType, &HexCoordinates, &BedrockElevation)>,
+    asset_server: Res<AssetServer>,
+    mut commands: Commands,
+) {
     let tile_assets = tiles::TileAssets::new(&asset_server);
-    for (tile_type) in query.iter() {
+
+    println!("Updating terrain mesh");
+    for (entity, tile_type, hex, altitude) in query.iter() {
+        let world_pos = pointy_layout().hex_to_world_pos(hex.0);
+
         let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
         // update entity with new mesh and material
         commands.entity(entity).insert(PbrBundle {
+            transform: Transform::from_xyz(world_pos.x, altitude.value, world_pos.y)
+                .with_scale(Vec3::splat(2.0)),
             mesh: mesh_handle,
             material: material_handle,
             ..default()
@@ -291,6 +364,8 @@ pub enum GroundWaterSystemSet {
     TerrainAnalysis,
     RedistributeOverflow,
     ApplyWaterOverflow,
+    TerrainMetamorphis,
+    VisualUpdate,
 }
 
 fn main() {
@@ -345,6 +420,16 @@ fn main() {
                 .in_set(GroundWaterSystemSet::ApplyWaterOverflow)
                 .after(GroundWaterSystemSet::RedistributeOverflow),
         )
+        .add_system(
+            morph_terrain_system
+                .in_set(GroundWaterSystemSet::TerrainMetamorphis)
+                .after(GroundWaterSystemSet::ApplyWaterOverflow),
+        )
+        .add_system(
+            update_terrain_assets
+                .in_set(GroundWaterSystemSet::VisualUpdate)
+                .after(GroundWaterSystemSet::TerrainMetamorphis),
+        )
         .run();
 }
 
@@ -354,17 +439,11 @@ fn epoch_system() {
 
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let layout = HexLayout {
-        orientation: HexOrientation::pointy(),
-        hex_size: world::HEX_SIZE,
-        ..default()
-    };
-
     let world = WorldAttributes::new();
     // load all gltf files from assets folder
     let tile_assets = tiles::TileAssets::new(&asset_server);
     // use hexx lib to generate hexagon shaped map of hexagons
-    let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, world::MAP_RADIUS).collect();
+    let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, MAP_RADIUS).collect();
 
     // generate altitude and derive temperature from that
     let altitude_map = world.altitude.generate_altitude_map(&all_hexes);
@@ -382,7 +461,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
 
         // hex -> world position
-        let pos = layout.hex_to_world_pos(hex);
+        let pos = pointy_layout().hex_to_world_pos(hex);
 
         // create terrain entity
         let id = commands
@@ -410,6 +489,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 },
                 Temperature { value: temperature },
                 Overflow { value: 0.0 }, // TODO: should this be calculated before epoch?
+                HexCoordinates { 0: hex },
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
                 LowerNeighbours { ids: vec![] }, // populate once weather has run
                 HigherNeighbours { ids: vec![] }, // populate once weather has run
