@@ -1,5 +1,6 @@
+// use bevy::utils::Duration;
+
 use bevy::prelude::*;
-use bevy::utils::Duration;
 
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_picking::prelude::*;
@@ -18,7 +19,7 @@ mod tiles;
 mod utils;
 mod world;
 
-use tiles::{TileType, WeatherEffects};
+use tiles::{TileAssets, TileType, WeatherEffects};
 use utils::RandomSelection;
 use world::{TileTypeGenerator, WorldAttributes};
 
@@ -47,7 +48,7 @@ pub const HUMIDITY_FACTOR: f32 = 0.03;
 
 /// The humidity travel factor influences how fast humidity moves across the game world. Higher
 /// values mean that humidity can travel farther from its original source.
-pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.1;
+pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.5;
 
 /// The evaporation factor determines how quickly water evaporates. Higher values lead to faster
 /// evaporation.
@@ -74,7 +75,7 @@ pub const ELEVATION_INCREMENT: f32 = 0.1;
 pub const SEA_LEVEL: f32 = 1.0;
 
 /// Lower this value to make terrain more sensitive to change
-pub const TERRAIN_CHANGE_SENSITIVITY: f32 = 1.0;
+pub const TERRAIN_CHANGE_SENSITIVITY: f32 = 0.1;
 
 /// Describes the orientation and tile size of a hexagon grid.
 pub fn pointy_layout() -> HexLayout {
@@ -87,8 +88,11 @@ pub fn pointy_layout() -> HexLayout {
 
 ///////////////////////////////// Resources /////////////////////////////////////////
 
-#[derive(Resource)]
-pub struct EpochTimer(Timer);
+#[derive(Debug, Clone, Resource, Default)]
+pub struct Epochs {
+    epochs: u16,
+    times_called: HashMap<Entity, u16>,
+}
 
 #[derive(Debug, Resource)]
 pub struct HexToEntity(HashMap<Hex, Entity>);
@@ -153,25 +157,14 @@ pub struct LowerNeighbours {
     pub ids: Vec<(Entity, f32)>,
 }
 
-///////////////////////////////// Terrain Morphing /////////////////////////////////////////
+///////////////////////////////// Terrain Changes /////////////////////////////////////////
+/// TODO: should this attach a component to the entity if the tile changes? or signal event?
 /// Gives this entity a new tiletype if weather conditions are met
-fn morph_terrain_system(
-    mut query: Query<(
-        Entity,
-        &WaterElevation,
-        &SoilElevation,
-        &BedrockElevation,
-        &Humidity,
-        &mut TileType,
-    )>,
-) {
-    for (_entity, water_level, soil_level, bedrock_level, humidity, mut tile_type) in
-        query.iter_mut()
-    {
+fn morph_terrain_system(mut query: Query<(Entity, &ElevationBundle, &Humidity, &mut TileType)>) {
+    for (_entity, elevation, humidity, mut tile_type) in query.iter_mut() {
         let mut tile_probabilities = humidity.apply_weather(&tile_type);
-        // let water_probabilities = (*&water_level, *&soil_level).apply_weather(&tile_type);
 
-        tile_probabilities.extend((*&water_level, *&soil_level).apply_weather(&tile_type));
+        tile_probabilities.extend((&elevation.water, &elevation.soil).apply_weather(&tile_type));
 
         let new_tile = tile_probabilities.pick_random();
         *tile_type = new_tile;
@@ -179,56 +172,66 @@ fn morph_terrain_system(
 }
 
 fn update_terrain_assets(
-    query: Query<(Entity, &TileType, &HexCoordinates, &BedrockElevation)>,
-    asset_server: Res<AssetServer>,
-    mut commands: Commands,
+    mut query: Query<(
+        Entity,
+        &TileType,
+        &HexCoordinates,
+        &ElevationBundle,
+        &mut Transform,
+        &mut Handle<Mesh>,
+        &mut Handle<StandardMaterial>,
+    )>,
+    tile_assets: Res<TileAssets>,
 ) {
-    let tile_assets = tiles::TileAssets::new(&asset_server);
-
-    // println!("Updating terrain mesh");
-    for (entity, tile_type, hex, altitude) in query.iter() {
+    for (_entity, tile_type, hex, altitude, mut transform, mut mesh_handle, mut material_handle) in
+        query.iter_mut()
+    {
         let world_pos = pointy_layout().hex_to_world_pos(hex.0);
 
-        let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
-        // update entity with new mesh and material
-        commands.entity(entity).insert(PbrBundle {
-            transform: Transform::from_xyz(world_pos.x, altitude.value, world_pos.y)
-                .with_scale(Vec3::splat(2.0)),
-            mesh: mesh_handle,
-            material: material_handle,
-            ..default()
-        });
+        // TODO: water height is getting too high
+        let total_height = altitude.bedrock.value;
+
+        let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
+
+        // TODO: pickable is being lost when this gets updated
+        // update entity with new mesh, material and transform
+        *transform = Transform::from_xyz(world_pos.x, total_height, world_pos.y)
+            .with_scale(Vec3::splat(2.0));
+        *mesh_handle = new_mesh_handle;
+        *material_handle = new_material_handle;
     }
 }
 
 /////////////////////////////////Weather Systems//////////////////////////////////////////////////
-
-#[derive(Default, Resource)]
-struct GroundWaterUpdates(HashMap<Entity, f32>);
 
 fn precipitation_system(
     mut query: Query<(
         &Humidity,
         &mut Precipitation,
         &TileType,
-        &mut WaterElevation,
+        &mut ElevationBundle,
     )>,
 ) {
     for (humidity, mut precipitation, tile_type, mut water_level) in query.iter_mut() {
         // Calculate precipitation
         precipitation.value +=
             humidity.value * PRECIPITATION_FACTOR * tile_type.precipitation_factor();
-        water_level.value += precipitation.value;
-        println!("Precipitation: {}", precipitation.value);
+
+        water_level.water.value += precipitation.value;
     }
+
+    assert!(query.iter().len() > 0);
 }
 
-fn evaporation_system(mut query: Query<(&WaterElevation, &mut Humidity, &Temperature)>) {
-    for (water_elevation, mut humidity, temperature) in query.iter_mut() {
+// TODO: positive temperature component?
+fn evaporation_system(mut query: Query<(&mut ElevationBundle, &mut Humidity, &Temperature)>) {
+    for (mut elevation, mut humidity, temperature) in query.iter_mut() {
         // Calculate evaporation
-        let evaporation = temperature.value.max(0.0) * water_elevation.value * EVAPORATION_FACTOR;
+        let evaporation = temperature.value.max(0.0) * elevation.water.value * EVAPORATION_FACTOR;
+        // println!("evaporation: {}", evaporation);
         // Update humidity
         humidity.value += evaporation;
+        elevation.water.value -= evaporation;
     }
 }
 
@@ -237,37 +240,28 @@ fn evaporation_system(mut query: Query<(&WaterElevation, &mut Humidity, &Tempera
 fn calculate_neighbour_heights_system(
     mut query: Query<(
         Entity,
-        &BedrockElevation,
+        &ElevationBundle,
         &Neighbours,
-        &WaterElevation,
-        &SoilElevation,
         &mut LowerNeighbours,
         &mut HigherNeighbours,
     )>,
-    neighbour_query: Query<(&BedrockElevation, &WaterElevation, &SoilElevation)>,
+    neighbour_query: Query<&ElevationBundle>,
 ) {
-    for (
-        _entity,
-        elevation,
-        neighbours,
-        water_level,
-        soil_level,
-        mut lower_neighbours,
-        mut higher_neighbours,
-    ) in query.iter_mut()
+    for (_entity, elevation, neighbours, mut lower_neighbours, mut higher_neighbours) in
+        query.iter_mut()
     {
-        let this_entity_height = elevation.value + water_level.value + soil_level.value;
+        let this_entity_height =
+            elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
         // Reset the lists of lower and higher neighbours
         lower_neighbours.ids.clear();
         higher_neighbours.ids.clear();
 
         for neighbour_id in &neighbours.ids {
-            if let Ok((neighbour_elevation, neighbour_water, neighbour_soil)) =
-                neighbour_query.get(*neighbour_id)
-            {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
+            if let Ok(neighbour_elevation) = neighbour_query.get(*neighbour_id) {
+                let neighbour_height = neighbour_elevation.bedrock.value
+                    + elevation.water.value
+                    + neighbour_elevation.soil.value;
 
                 // Add the neighbour to the appropriate list
                 if neighbour_height < this_entity_height {
@@ -293,11 +287,11 @@ fn redistribute_humidity_system(
     mut commands: Commands,
     mut query: Query<(Entity, &mut Humidity, &TileType, &HigherNeighbours)>,
 ) {
-    for (entity, mut humidity, tile_type, higher_neighbours) in query.iter_mut() {
+    for (_entity, mut humidity, _tile_type, higher_neighbours) in query.iter_mut() {
         let humidity_to_escape = humidity.value * HUMIDITY_FACTOR;
         let num_higher_neighbours = higher_neighbours.ids.len() as f32;
 
-        for &(neighbour_id, neighbour_height) in &higher_neighbours.ids {
+        for &(neighbour_id, _neighbour_height) in &higher_neighbours.ids {
             let proportion = 1.0 / num_higher_neighbours;
             let humidity_for_neighbour = humidity_to_escape * proportion;
 
@@ -330,20 +324,15 @@ fn apply_humidity_redistribution(
 ///////////////////////////////// Overflow systems /////////////////////////////////////////
 #[derive(Debug, Clone, Component)]
 struct IncomingOverflow {
-    value: f32,
+    water: f32,
+    soil: f32,
 }
 
 fn calculate_overflow_system(
-    mut query: Query<(
-        Entity,
-        &SoilElevation,
-        &WaterElevation,
-        &mut Overflow,
-        &TileType,
-    )>,
+    mut query: Query<(Entity, &ElevationBundle, &mut Overflow, &TileType)>,
 ) {
-    for (_entity, soil_elevation, water_elevation, mut overflow, tiletype) in query.iter_mut() {
-        overflow.value += tiletype.overflow_amount(water_elevation.value, soil_elevation.value);
+    for (_entity, elevation, mut overflow, tiletype) in query.iter_mut() {
+        overflow.value += tiletype.overflow_amount(elevation.water.value, elevation.soil.value);
     }
 }
 
@@ -352,18 +341,15 @@ fn redistribute_overflow_system(
     mut query: Query<(
         Entity,
         &mut Overflow,
-        &mut WaterElevation,
-        &mut SoilElevation,
-        &mut BedrockElevation,
+        &mut ElevationBundle,
         &LowerNeighbours,
     )>,
     mut commands: Commands,
     mut incoming_overflow_query: Query<&mut IncomingOverflow>,
 ) {
-    for (_entity, mut overflow, mut water_level, soil_level, bedrock_level, lower_neighbours) in
-        query.iter_mut()
-    {
-        let this_entity_height = bedrock_level.value + water_level.value + soil_level.value;
+    for (_entity, mut overflow, mut elevation, lower_neighbours) in query.iter_mut() {
+        let this_entity_height =
+            elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
         // Get the total altitude difference with lower neighbours
         let total_difference: f32 = lower_neighbours
@@ -374,7 +360,7 @@ fn redistribute_overflow_system(
 
         // If there are no lower neighbours, add the overflow to the water level
         if total_difference == 0.0 {
-            water_level.value += overflow.value;
+            elevation.water.value += overflow.value;
             overflow.value = 0.0;
             continue;
         }
@@ -387,20 +373,23 @@ fn redistribute_overflow_system(
         for &(neighbour_id, neighbour_height) in &lower_neighbours.ids {
             let difference = (this_entity_height - neighbour_height).max(0.0);
             let proportion = difference / total_difference;
-            let overflow_for_neighbour = overflow.value * proportion;
+            let water_overflow_for_neighbour = overflow.value * proportion;
+            let soil_overflow_for_neighbour =
+                water_overflow_for_neighbour * elevation.soil.value * EROSION_FACTOR;
 
             if let Ok(mut incoming_overflow) = incoming_overflow_query.get_mut(neighbour_id) {
-                incoming_overflow.value += overflow_for_neighbour;
+                incoming_overflow.water += water_overflow_for_neighbour;
+                incoming_overflow.soil += soil_overflow_for_neighbour;
             } else {
                 commands.entity(neighbour_id).insert(IncomingOverflow {
-                    value: overflow_for_neighbour,
+                    water: water_overflow_for_neighbour,
+                    soil: soil_overflow_for_neighbour,
                 });
             }
         }
 
-        println!("Overflow: {}", overflow.value);
-        println!("Water level: {}", water_level.value);
-        water_level.value -= overflow.value;
+        elevation.water.value -= overflow.value;
+        elevation.soil.value -= overflow.value * elevation.soil.value * EROSION_FACTOR;
         overflow.value = 0.0;
     }
 }
@@ -408,11 +397,13 @@ fn redistribute_overflow_system(
 // Groundwater overflow is applied to this neighbours water level
 // TODO: add soil or make seperate function for soil
 fn apply_water_overflow(
-    mut query: Query<(Entity, &mut WaterElevation, &IncomingOverflow), Added<IncomingOverflow>>,
+    mut query: Query<(Entity, &mut ElevationBundle, &IncomingOverflow), Added<IncomingOverflow>>,
     mut commands: Commands,
 ) {
-    for (entity, mut water_level, incoming_overflow) in query.iter_mut() {
-        water_level.value += incoming_overflow.value;
+    for (entity, mut elevation, incoming_overflow) in query.iter_mut() {
+        elevation.water.value += incoming_overflow.water;
+        elevation.soil.value += incoming_overflow.soil;
+
         commands.entity(entity).remove::<IncomingOverflow>();
     }
 }
@@ -421,6 +412,8 @@ fn apply_water_overflow(
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub enum GroundWaterSystemSet {
+    LoadingAssets,
+    GeneratingGrid,
     EpochStart,
     LocalWeather,
     TerrainAnalysis,
@@ -430,13 +423,28 @@ pub enum GroundWaterSystemSet {
     VisualUpdate,
 }
 
+/*
+
+   app spawning and scheduling
+
+   TODO: an epoch timer should run and trigger a chain of events
+   problem is that the other systems are not waiting for the epoch
+   i assume the .after() only works on the initial run
+
+    -- right now it is running all systems on a fixed schedule, which seems very inefficient and probably has race conditions
+
+   solution --> run local weather on timer, and have each function create a new component, which will trigger the next function in the chain for that entity
+   this may cause some race conditions, but it may be tolerable, and may be considered a bit of randomness?
+        --> would have to check that there is no overlap in the systems that are running on the same entity, which seems impossible
+*/
 fn main() {
     App::new()
         .insert_resource(AmbientLight {
             brightness: 0.1,
             ..default()
         })
-        .insert_resource(FixedTime::new_from_secs(5.0))
+        .insert_resource(FixedTime::new_from_secs(0.5))
+        .insert_resource(Epochs::default())
         .add_plugins(DefaultPlugins)
         .add_plugins(
             DefaultPickingPlugins
@@ -446,15 +454,18 @@ fn main() {
         .add_plugin(CameraControllerPlugin)
         .add_plugin(EguiPlugin)
         .add_startup_system(setup_camera)
-        .add_startup_system(setup_grid)
         .add_startup_system(play_tunes)
+        .add_startup_system(load_tile_assets)
+        .add_startup_system(setup_grid.after(load_tile_assets))
         .add_system(ui_example)
         .add_system(bevy::window::close_on_esc)
+        // beginning of epoch
         .add_system(
             epoch_system
                 .in_set(GroundWaterSystemSet::EpochStart)
                 .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // initial local weather systems should run first
         .add_systems(
             (
                 precipitation_system,
@@ -462,45 +473,110 @@ fn main() {
                 calculate_overflow_system,
             )
                 .in_set(GroundWaterSystemSet::LocalWeather)
-                .after(GroundWaterSystemSet::EpochStart),
+                .after(GroundWaterSystemSet::EpochStart)
+                .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // terrain analysis systems should run after local weather to consider water levels
         .add_system(
             calculate_neighbour_heights_system
                 .in_set(GroundWaterSystemSet::TerrainAnalysis)
-                .after(GroundWaterSystemSet::LocalWeather),
+                .after(GroundWaterSystemSet::LocalWeather)
+                .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // now that we know the heights of neighbours we can apply the water/humidity overflows
         .add_systems(
             (redistribute_overflow_system, redistribute_humidity_system)
                 .in_set(GroundWaterSystemSet::RedistributeOverflow)
-                .after(GroundWaterSystemSet::TerrainAnalysis),
+                .after(GroundWaterSystemSet::TerrainAnalysis), // .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // apply the overflow to the neighbours state
+        // TODO: check the sequence of events if the schedule is not given
         .add_systems(
             (apply_water_overflow, apply_humidity_redistribution)
                 .in_set(GroundWaterSystemSet::ApplyWaterOverflow)
-                .after(GroundWaterSystemSet::RedistributeOverflow),
+                .after(GroundWaterSystemSet::RedistributeOverflow), // .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // change the tile type based on the weather conditions
+        // update temperature based on new altitude
         .add_system(
             morph_terrain_system
                 .in_set(GroundWaterSystemSet::TerrainMetamorphis)
-                .after(GroundWaterSystemSet::ApplyWaterOverflow),
+                .after(GroundWaterSystemSet::ApplyWaterOverflow), // .in_schedule(CoreSchedule::FixedUpdate),
         )
+        // update tile meshes and materials
         .add_system(
             update_terrain_assets
                 .in_set(GroundWaterSystemSet::VisualUpdate)
-                .after(GroundWaterSystemSet::TerrainMetamorphis),
+                .after(GroundWaterSystemSet::TerrainMetamorphis), // .in_schedule(CoreSchedule::FixedUpdate),
         )
         .run();
 }
 
-fn epoch_system() {
-    println!("Epoch");
+fn epoch_system(
+    query: Query<(
+        &TileType,
+        &Humidity,
+        &Precipitation,
+        &Evaporation,
+        &Temperature,
+        &ElevationBundle,
+    )>,
+    mut epochs: ResMut<Epochs>,
+) {
+    println!("=== Epoch: {} ===\n", epochs.epochs);
+    epochs.epochs += 1;
+
+    for (tile_type, humidity, precipitation, evaporation, temperature, elevation) in query.iter() {
+        if tile_type != &TileType::Ice {
+            println!(
+                "Tile Type: {:?}\n\
+             Humidity: {:?}\n\
+             Precipitation: {:?}\n\
+             Evaporation: {:?}\n\
+             Temperature: {:?}\n\
+             Elevation: {:?}\n\
+             ------------------",
+                tile_type, humidity, precipitation, evaporation, temperature, elevation
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Component)]
+pub struct ElevationBundle {
+    bedrock: BedrockElevation,
+    soil: SoilElevation,
+    water: WaterElevation,
+}
+
+impl From<(TileType, BedrockElevation)> for ElevationBundle {
+    fn from(tile_type: (TileType, BedrockElevation)) -> Self {
+        Self {
+            bedrock: BedrockElevation {
+                value: tile_type.1.value,
+            },
+            soil: SoilElevation {
+                value: tile_type.0.default_soil(),
+            },
+            water: WaterElevation {
+                value: tile_type.0.default_ground_water(),
+            },
+        }
+    }
+}
+
+fn load_tile_assets(asset_server: Res<AssetServer>, mut commands: Commands) {
+    let tile_assets = tiles::TileAssets::new(&asset_server);
+    commands.insert_resource(tile_assets);
 }
 
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let world = WorldAttributes::new();
+
     // load all gltf files from assets folder
     let tile_assets = tiles::TileAssets::new(&asset_server);
+
     // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, MAP_RADIUS).collect();
 
@@ -512,12 +588,12 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     // Spawn tiles
     for hex in all_hexes.clone() {
-        let altitude = altitude_map.get(&hex).unwrap().clone();
-        let temperature = temperature_map.get(&hex).unwrap().clone();
+        let altitude = *altitude_map.get(&hex).unwrap();
+        let temperature = *temperature_map.get(&hex).unwrap();
 
         // spawn tile based on altitude and temperature
         let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
-        let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
+        let (mesh_handle, material_handle) = tile_assets.get_mesh_and_material(&tile_type);
 
         // hex -> world position
         let pos = pointy_layout().hex_to_world_pos(hex);
@@ -535,20 +611,15 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 PickableBundle::default(),    // <- Makes the mesh pickable.
                 RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 OnPointer::<Click>::run_callback(terrain_callback),
-                // Terrain::new(hex, tile_type, altitude, temperature),
-                BedrockElevation { value: altitude },
-                WaterElevation {
-                    value: tile_type.default_ground_water(),
-                },
-                SoilElevation {
-                    value: tile_type.default_soil(),
-                },
+                ElevationBundle::from((tile_type, BedrockElevation { value: altitude })),
                 Humidity {
                     value: tile_type.default_humidity(),
                 },
                 Temperature { value: temperature },
+                Evaporation { value: 0.0 },
+                Precipitation { value: 0.0 },
                 Overflow { value: 0.0 }, // TODO: should this be calculated before epoch?
-                HexCoordinates { 0: hex },
+                HexCoordinates(hex),
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
                 LowerNeighbours { ids: vec![] }, // populate once weather has run
                 HigherNeighbours { ids: vec![] }, // populate once weather has run
@@ -580,20 +651,14 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 fn terrain_callback(
     // The first parameter is always the `ListenedEvent`, passed in by the event listening system.
     In(event): In<ListenedEvent<Click>>,
-    query: Query<(
-        Entity,
-        &WaterElevation,
-        &SoilElevation,
-        &Overflow,
-        &Humidity,
-    )>,
+    query: Query<(Entity, &ElevationBundle, &Overflow, &Humidity)>,
 ) -> Bubble {
     // Get the entity and its terrain
-    for (entity, water_level, soil_level, overflow, humidity) in query.iter() {
+    for (entity, elevation, overflow, humidity) in query.iter() {
         if entity == event.target {
             println!(
                 "Entity: {:?}, water: {:?}, soil: {:?}, overflow: {:?}, humidity: {:?}",
-                entity, water_level, soil_level, overflow, humidity
+                entity, elevation.water, elevation.soil, overflow, humidity
             );
             println!("\n\n");
             break;
