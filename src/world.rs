@@ -1,4 +1,3 @@
-use bevy::prelude::*;
 use hexx::*;
 
 use rand::prelude::SliceRandom;
@@ -6,8 +5,9 @@ use std::collections::HashMap;
 
 use super::tiles::TileType;
 use super::utils::RandomSelection;
-use super::{MAP_RADIUS, HEX_SIZE};
-
+use super::{
+    ELEVATION_INCREMENT, HIGHEST_ELEVATION, MAP_RADIUS, MOUNTAIN_SPREAD, SEA_LEVEL, VULCANISM,
+};
 
 #[derive(Debug, Clone)]
 pub struct AltitudeAttributes {
@@ -21,11 +21,11 @@ pub struct AltitudeAttributes {
 impl AltitudeAttributes {
     pub fn new() -> Self {
         Self {
-            highest_elevation: 10.0,
-            vulcanism: 6.0,
-            mountain_spread: MAP_RADIUS * 60 / 100,
-            elevation_increment: 0.1,
-            sea_level: 1.0,
+            highest_elevation: HIGHEST_ELEVATION,
+            vulcanism: VULCANISM,
+            mountain_spread: MOUNTAIN_SPREAD as u32,
+            elevation_increment: ELEVATION_INCREMENT,
+            sea_level: SEA_LEVEL,
         }
     }
 
