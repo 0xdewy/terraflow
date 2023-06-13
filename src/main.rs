@@ -112,14 +112,68 @@ pub struct SoilElevation {
     pub value: f32,
 }
 
+impl From<TileType> for SoilElevation {
+    fn from(tile_type: TileType) -> SoilElevation {
+        match tile_type {
+            TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle
+            | TileType::Swamp => SoilElevation { value: 1.0 },
+            TileType::Desert | TileType::Waste => SoilElevation { value: 0.3 },
+            TileType::Rocky | TileType::Dirt => SoilElevation { value: 0.1 },
+            TileType::Ocean | TileType::Water => SoilElevation { value: 0.0 },
+            TileType::Mountain | TileType::Ice => SoilElevation { value: 0.0 },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct WaterElevation {
     pub value: f32,
 }
 
+impl From<f32> for WaterElevation {
+    fn from(value: f32) -> Self {
+        WaterElevation { value }
+    }
+}
+
+impl From<TileType> for WaterElevation {
+    fn from(tile_type: TileType) -> Self {
+        match tile_type {
+            TileType::Ocean | TileType::Water | TileType::Swamp => 1.0.into(),
+            TileType::Ice
+            | TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle => 0.7.into(),
+            TileType::Dirt | TileType::Rocky => 0.5.into(),
+            TileType::Mountain | TileType::Desert | TileType::Waste => 0.2.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct Humidity {
     pub value: f32,
+}
+
+impl From<f32> for Humidity {
+    fn from(value: f32) -> Self {
+        Humidity { value }
+    }
+}
+
+impl From<TileType> for Humidity {
+    fn from(tile_type: TileType) -> Humidity {
+        match tile_type {
+            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0.into(),
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7.into(),
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5.into(),
+            TileType::Waste => 0.2.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Component)]
@@ -552,15 +606,9 @@ pub struct ElevationBundle {
 impl From<(TileType, BedrockElevation)> for ElevationBundle {
     fn from(tile_type: (TileType, BedrockElevation)) -> Self {
         Self {
-            bedrock: BedrockElevation {
-                value: tile_type.1.value,
-            },
-            soil: SoilElevation {
-                value: tile_type.0.default_soil(),
-            },
-            water: WaterElevation {
-                value: tile_type.0.default_ground_water(),
-            },
+            bedrock: tile_type.1.into(),
+            soil: tile_type.0.into(),
+            water: tile_type.0.into(),
         }
     }
 }
@@ -612,9 +660,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 OnPointer::<Click>::run_callback(terrain_callback),
                 ElevationBundle::from((tile_type, BedrockElevation { value: altitude })),
-                Humidity {
-                    value: tile_type.default_humidity(),
-                },
+                Humidity::from(tile_type),
                 Temperature { value: temperature },
                 Evaporation { value: 0.0 },
                 Precipitation { value: 0.0 },
