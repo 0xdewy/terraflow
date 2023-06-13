@@ -189,7 +189,7 @@ fn update_terrain_assets(
         let world_pos = pointy_layout().hex_to_world_pos(hex.0);
 
         // TODO: water height is getting too high
-        let total_height = altitude.bedrock.value;
+        let total_height = altitude.bedrock.value + altitude.soil.value + altitude.water.value;
 
         let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
 
