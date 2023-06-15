@@ -28,6 +28,21 @@ pub enum TileType {
 }
 
 impl TileType {
+    // how much precipitation adds to groundwater
+    pub fn handle_precipitation(&self, precipitation: f32) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => precipitation,
+        }
+    }
+
+    // how much evaporation takes away from ground_water
+    pub fn handle_evaporation(&self, evaporation: f32) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => evaporation,
+        }
+    }
 
     pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
