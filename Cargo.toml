@@ -19,6 +19,8 @@ bevy_basic_camera = { git = "https://github.com/DGriffin91/bevy_basic_camera" }
 hexx = "0.6.0"
 rand = "0.8.5"
 bevy_egui = "0.20.3"
+strum = "0.24.1"
+strum_macros = "0.24.3"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

@@ -16,7 +16,7 @@ impl RandomSelection<bool> for f32 {
 
 impl RandomSelection<TileType> for Vec<TileType> {
     fn pick_random(&self) -> TileType {
-        self.choose(&mut rand::thread_rng()).unwrap().clone()
+        *self.choose(&mut rand::thread_rng()).unwrap()
     }
 }
 
@@ -29,7 +29,7 @@ impl RandomSelection<TileType> for Vec<(TileType, f32)> {
         for (tile_type, weight) in self {
             random_weight -= weight;
             if random_weight <= 0.0 {
-                return tile_type.clone();
+                return *tile_type;
             }
         }
         panic!("No tile type selected")

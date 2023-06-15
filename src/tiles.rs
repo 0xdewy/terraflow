@@ -1,12 +1,16 @@
-use super::{Humidity, SoilElevation, Temperature, WaterElevation, TERRAIN_CHANGE_SENSITIVITY};
 use bevy::prelude::*;
+
+use super::{Humidity, SoilElevation, WaterElevation, TERRAIN_CHANGE_SENSITIVITY};
+
+use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::{EnumCount, EnumIter};
 
 const CERTAIN: f32 = 1.0;
 const HIGH_ODDS: f32 = 0.8;
 const MED_ODDS: f32 = 0.5;
 const LOW_ODDS: f32 = 0.2;
 
-#[derive(Clone, Debug, Copy, Component)]
+#[derive(Clone, EnumCount, EnumIter, Debug, Copy, PartialEq, Hash, Component)]
 pub enum TileType {
     Ocean,
     Water,
@@ -24,58 +28,26 @@ pub enum TileType {
 }
 
 impl TileType {
-    pub fn default_ground_water(&self) -> f32 {
+    // how much precipitation adds to groundwater
+    pub fn handle_precipitation(&self, precipitation: f32) -> f32 {
         match self {
-            TileType::Ocean | TileType::Water | TileType::Swamp => 1.0,
-            TileType::Ice
-            | TileType::Grass
-            | TileType::Hills
-            | TileType::Forest
-            | TileType::Jungle => 0.7,
-            TileType::Dirt | TileType::Rocky => 0.5,
-            TileType::Mountain | TileType::Desert | TileType::Waste => 0.2,
+            TileType::Ocean => 0.0,
+            _ => precipitation,
         }
     }
 
-    pub fn default_humidity(&self) -> f32 {
+    // how much evaporation takes away from ground_water
+    pub fn handle_evaporation(&self, evaporation: f32) -> f32 {
         match self {
-            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0,
-            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7,
-            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5,
-            TileType::Waste => 0.2,
-        }
-    }
-
-    pub fn default_pollution(&self) -> f32 {
-        match self {
-            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 0.0,
-            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.0,
-            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.0,
-            TileType::Waste => 1.0,
-        }
-    }
-
-    pub fn default_soil(&self) -> f32 {
-        match self {
-            TileType::Grass
-            | TileType::Hills
-            | TileType::Forest
-            | TileType::Jungle
-            | TileType::Swamp => 1.0,
-            TileType::Desert | TileType::Waste => 0.3,
-            TileType::Rocky | TileType::Dirt => 0.1,
-            TileType::Ocean | TileType::Water => 0.0,
-            TileType::Mountain | TileType::Ice => 0.0,
+            TileType::Ocean => 0.0,
+            _ => evaporation,
         }
     }
 
     pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
             TileType::Ocean => 0.0,
-            _ => {
-                let water_above_soil = (water_elevation - soil_elevation).max(0.0);
-                return water_above_soil;
-            }
+            _ => (water_elevation - soil_elevation).max(0.0),
         }
     }
 
@@ -114,17 +86,33 @@ pub trait WeatherEffects: Sized {
 
 impl WeatherEffects for Humidity {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
+        let mut probabilities = vec![];
+
         if self.exceeds_limit(tile_type) {
-            match tile_type {
-                TileType::Waste => return vec![(TileType::Swamp, LOW_ODDS)],
-                TileType::Swamp | TileType::Jungle => return vec![(TileType::Jungle, HIGH_ODDS)],
-                TileType::Grass | TileType::Forest => return vec![(TileType::Jungle, MED_ODDS)],
-                TileType::Dirt | TileType::Desert => return vec![(TileType::Grass, LOW_ODDS)],
-                TileType::Rocky => return vec![(TileType::Hills, LOW_ODDS)],
-                _ => return vec![(*tile_type, CERTAIN)],
-            }
+            probabilities.extend(match tile_type {
+                TileType::Waste => vec![(TileType::Swamp, LOW_ODDS)],
+                TileType::Grass => vec![(TileType::Forest, MED_ODDS)],
+                TileType::Forest => vec![(TileType::Jungle, MED_ODDS)],
+                TileType::Desert => vec![(TileType::Grass, MED_ODDS)],
+                TileType::Rocky => vec![(TileType::Hills, LOW_ODDS)],
+                _ => vec![(*tile_type, CERTAIN)],
+            });
         }
-        vec![(*tile_type, CERTAIN)]
+        if self.below_limit(tile_type) {
+            probabilities.extend(match tile_type {
+                TileType::Waste => vec![(TileType::Desert, LOW_ODDS)],
+                TileType::Swamp | TileType::Jungle => vec![(TileType::Forest, LOW_ODDS)],
+                TileType::Grass => vec![(TileType::Dirt, MED_ODDS)],
+                TileType::Forest => vec![(TileType::Grass, MED_ODDS)],
+                _ => vec![(*tile_type, CERTAIN)],
+            })
+        }
+
+        if probabilities.is_empty() {
+            return vec![(*tile_type, CERTAIN)];
+        }
+
+        probabilities
     }
 
     fn exceeds_limit(&self, tile_type: &TileType) -> bool {
@@ -166,6 +154,14 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
                 TileType::Swamp => return vec![(TileType::Water, LOW_ODDS)],
                 _ => return vec![(*tile_type, CERTAIN)],
             }
+        } else if self.below_limit(tile_type) {
+            match tile_type {
+                TileType::Swamp => {
+                    return vec![(TileType::Dirt, LOW_ODDS), (TileType::Grass, MED_ODDS)]
+                }
+                TileType::Water => return vec![(TileType::Swamp, MED_ODDS)],
+                _ => return vec![(*tile_type, CERTAIN)],
+            }
         }
         vec![(*tile_type, CERTAIN)]
     }
@@ -196,99 +192,97 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
     }
 }
 
+#[derive(Resource, Clone)]
+pub enum TileAsset {
+    Desert((Handle<Mesh>, Handle<StandardMaterial>)),
+    Dirt((Handle<Mesh>, Handle<StandardMaterial>)),
+    Forest((Handle<Mesh>, Handle<StandardMaterial>)),
+    Grass((Handle<Mesh>, Handle<StandardMaterial>)),
+    Hills((Handle<Mesh>, Handle<StandardMaterial>)),
+    Ice((Handle<Mesh>, Handle<StandardMaterial>)),
+    Jungle((Handle<Mesh>, Handle<StandardMaterial>)),
+    Mountain((Handle<Mesh>, Handle<StandardMaterial>)),
+    Ocean((Handle<Mesh>, Handle<StandardMaterial>)),
+    Rocky((Handle<Mesh>, Handle<StandardMaterial>)),
+    Swamp((Handle<Mesh>, Handle<StandardMaterial>)),
+    Waste((Handle<Mesh>, Handle<StandardMaterial>)),
+    Water((Handle<Mesh>, Handle<StandardMaterial>)),
+}
+
+impl Default for TileAsset {
+    fn default() -> Self {
+        TileAsset::Ocean((Handle::default(), Handle::default()))
+    }
+}
+
 #[derive(Resource, Default, Clone)]
 pub struct TileAssets {
-    pub desert: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub dirt: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub forest: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub grass: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub hills: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub ice: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub jungle: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub mountain: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub ocean: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub rocky: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub swamp: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub waste: (Handle<Mesh>, Handle<StandardMaterial>),
-    pub water: (Handle<Mesh>, Handle<StandardMaterial>),
+    assets: [TileAsset; TileType::COUNT],
 }
 
 impl TileAssets {
     pub fn new(asset_server: &Res<AssetServer>) -> Self {
-        TileAssets {
-            desert: (
-                asset_server.load("tiles/Desert.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Desert.gltf#Material0"),
-            ),
-            dirt: (
-                asset_server.load("tiles/Dirt.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Dirt.gltf#Material0"),
-            ),
-            forest: (
-                asset_server.load("tiles/Forest.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Forest.gltf#Material0"),
-            ),
-            grass: (
-                asset_server.load("tiles/Grass.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Grass.gltf#Material0"),
-            ),
-            hills: (
-                asset_server.load("tiles/Hills.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Hills.gltf#Material0"),
-            ),
-            ice: (
-                asset_server.load("tiles/Ice.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Ice.gltf#Material0"),
-            ),
-            jungle: (
-                asset_server.load("tiles/Jungle.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Jungle.gltf#Material0"),
-            ),
-            mountain: (
-                asset_server.load("tiles/Mountain.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Mountain.gltf#Material0"),
-            ),
-            ocean: (
-                asset_server.load("tiles/Ocean.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Ocean.gltf#Material0"),
-            ),
-            rocky: (
-                asset_server.load("tiles/Rocky.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Rocky.gltf#Material0"),
-            ),
-            swamp: (
-                asset_server.load("tiles/Swamp.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Swamp.gltf#Material0"),
-            ),
-            waste: (
-                asset_server.load("tiles/Waste.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Waste.gltf#Material0"),
-            ),
-            water: (
-                asset_server.load("tiles/Water.gltf#Mesh0/Primitive0"),
-                asset_server.load("tiles/Water.gltf#Material0"),
-            ),
+        let mut assets: [TileAsset; TileType::COUNT] = Default::default();
+
+        for tile_type in TileType::iter() {
+            assets[usize::from(tile_type)] = TileAssets::load_tile_asset(asset_server, tile_type);
+        }
+
+        TileAssets { assets }
+    }
+
+    fn load_tile_asset(asset_server: &Res<AssetServer>, tile_type: TileType) -> TileAsset {
+        let tile_str = format!("{:?}", tile_type);
+        let mesh = asset_server.load(format!("tiles/{}.gltf#Mesh0/Primitive0", tile_str));
+        let material = asset_server.load(format!("tiles/{}.gltf#Material0", tile_str));
+
+        match tile_type {
+            TileType::Desert => TileAsset::Desert((mesh, material)),
+            TileType::Dirt => TileAsset::Dirt((mesh, material)),
+            TileType::Forest => TileAsset::Forest((mesh, material)),
+            TileType::Grass => TileAsset::Grass((mesh, material)),
+            TileType::Hills => TileAsset::Hills((mesh, material)),
+            TileType::Ice => TileAsset::Ice((mesh, material)),
+            TileType::Jungle => TileAsset::Jungle((mesh, material)),
+            TileType::Mountain => TileAsset::Mountain((mesh, material)),
+            TileType::Ocean => TileAsset::Ocean((mesh, material)),
+            TileType::Rocky => TileAsset::Rocky((mesh, material)),
+            TileType::Swamp => TileAsset::Swamp((mesh, material)),
+            TileType::Waste => TileAsset::Waste((mesh, material)),
+            TileType::Water => TileAsset::Water((mesh, material)),
         }
     }
 
-    pub fn mesh_and_material(
+    pub fn get_mesh_and_material(
         &self,
         tile_type: &TileType,
     ) -> (Handle<Mesh>, Handle<StandardMaterial>) {
-        match tile_type {
-            TileType::Ocean => self.ocean.clone(),
-            TileType::Water => self.water.clone(),
-            TileType::Mountain => self.mountain.clone(),
-            TileType::Hills => self.hills.clone(),
-            TileType::Grass => self.grass.clone(),
-            TileType::Desert => self.desert.clone(),
-            TileType::Dirt => self.dirt.clone(),
-            TileType::Forest => self.forest.clone(),
-            TileType::Ice => self.ice.clone(),
-            TileType::Jungle => self.jungle.clone(),
-            TileType::Rocky => self.rocky.clone(),
-            TileType::Swamp => self.swamp.clone(),
-            TileType::Waste => self.waste.clone(),
+        self.assets[usize::from(*tile_type)].clone().into()
+    }
+}
+
+impl From<TileAsset> for (Handle<Mesh>, Handle<StandardMaterial>) {
+    fn from(tile_asset: TileAsset) -> Self {
+        match tile_asset {
+            TileAsset::Desert(data)
+            | TileAsset::Dirt(data)
+            | TileAsset::Forest(data)
+            | TileAsset::Grass(data)
+            | TileAsset::Hills(data)
+            | TileAsset::Ice(data)
+            | TileAsset::Jungle(data)
+            | TileAsset::Mountain(data)
+            | TileAsset::Ocean(data)
+            | TileAsset::Rocky(data)
+            | TileAsset::Swamp(data)
+            | TileAsset::Waste(data)
+            | TileAsset::Water(data) => data,
         }
+    }
+}
+
+impl From<TileType> for usize {
+    fn from(tile_type: TileType) -> Self {
+        tile_type as Self
     }
 }

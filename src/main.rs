@@ -1,5 +1,6 @@
+// use bevy::utils::Duration;
+
 use bevy::prelude::*;
-use bevy::utils::Duration;
 
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_picking::prelude::*;
@@ -18,7 +19,7 @@ mod tiles;
 mod utils;
 mod world;
 
-use tiles::{TileType, WeatherEffects};
+use tiles::{TileAssets, TileType, WeatherEffects};
 use utils::RandomSelection;
 use world::{TileTypeGenerator, WorldAttributes};
 
@@ -43,15 +44,15 @@ pub const PRECIPITATION_FACTOR: f32 = 0.03;
 
 /// The humidity factor determines the overall humidity in the game world. A higher value results in
 /// a more humid environment.
-pub const HUMIDITY_FACTOR: f32 = 0.03;
+pub const HUMIDITY_FACTOR: f32 = 0.1;
 
 /// The humidity travel factor influences how fast humidity moves across the game world. Higher
 /// values mean that humidity can travel farther from its original source.
-pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.1;
+pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.5;
 
 /// The evaporation factor determines how quickly water evaporates. Higher values lead to faster
 /// evaporation.
-pub const EVAPORATION_FACTOR: f32 = 0.03;
+pub const EVAPORATION_FACTOR: f32 = 0.002;
 
 /// The highest possible elevation in the game world. This value represents the maximum height that
 /// terrain can reach.
@@ -74,7 +75,7 @@ pub const ELEVATION_INCREMENT: f32 = 0.1;
 pub const SEA_LEVEL: f32 = 1.0;
 
 /// Lower this value to make terrain more sensitive to change
-pub const TERRAIN_CHANGE_SENSITIVITY: f32 = 1.0;
+pub const TERRAIN_CHANGE_SENSITIVITY: f32 = 0.1;
 
 /// Describes the orientation and tile size of a hexagon grid.
 pub fn pointy_layout() -> HexLayout {
@@ -87,8 +88,12 @@ pub fn pointy_layout() -> HexLayout {
 
 ///////////////////////////////// Resources /////////////////////////////////////////
 
-#[derive(Resource)]
-pub struct EpochTimer(Timer);
+#[derive(Debug, Clone, Resource, Default)]
+pub struct Epochs {
+    epochs: u16,
+    times_called: HashMap<Entity, u16>,
+    fn_order: Vec<String>,
+}
 
 #[derive(Debug, Resource)]
 pub struct HexToEntity(HashMap<Hex, Entity>);
@@ -97,6 +102,23 @@ pub struct HexToEntity(HashMap<Hex, Entity>);
 
 #[derive(Debug, Clone, Component)]
 pub struct HexCoordinates(Hex);
+
+#[derive(Debug, Clone, Component)]
+pub struct ElevationBundle {
+    bedrock: BedrockElevation,
+    soil: SoilElevation,
+    water: WaterElevation,
+}
+
+impl From<(TileType, BedrockElevation)> for ElevationBundle {
+    fn from(tile_type: (TileType, BedrockElevation)) -> Self {
+        Self {
+            bedrock: tile_type.1.into(),
+            soil: tile_type.0.into(),
+            water: tile_type.0.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Component)]
 pub struct BedrockElevation {
@@ -108,14 +130,68 @@ pub struct SoilElevation {
     pub value: f32,
 }
 
+impl From<TileType> for SoilElevation {
+    fn from(tile_type: TileType) -> SoilElevation {
+        match tile_type {
+            TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle
+            | TileType::Swamp => SoilElevation { value: 1.0 },
+            TileType::Desert | TileType::Waste => SoilElevation { value: 0.3 },
+            TileType::Rocky | TileType::Dirt => SoilElevation { value: 0.1 },
+            TileType::Ocean | TileType::Water => SoilElevation { value: 0.0 },
+            TileType::Mountain | TileType::Ice => SoilElevation { value: 0.0 },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct WaterElevation {
     pub value: f32,
 }
 
+impl From<f32> for WaterElevation {
+    fn from(value: f32) -> Self {
+        WaterElevation { value }
+    }
+}
+
+impl From<TileType> for WaterElevation {
+    fn from(tile_type: TileType) -> Self {
+        match tile_type {
+            TileType::Ocean | TileType::Water | TileType::Swamp => 1.0.into(),
+            TileType::Ice
+            | TileType::Grass
+            | TileType::Hills
+            | TileType::Forest
+            | TileType::Jungle => 0.7.into(),
+            TileType::Dirt | TileType::Rocky => 0.5.into(),
+            TileType::Mountain | TileType::Desert | TileType::Waste => 0.2.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Component)]
 pub struct Humidity {
     pub value: f32,
+}
+
+impl From<f32> for Humidity {
+    fn from(value: f32) -> Self {
+        Humidity { value }
+    }
+}
+
+impl From<TileType> for Humidity {
+    fn from(tile_type: TileType) -> Humidity {
+        match tile_type {
+            TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0.into(),
+            TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7.into(),
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5.into(),
+            TileType::Waste => 0.2.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Component)]
@@ -153,25 +229,17 @@ pub struct LowerNeighbours {
     pub ids: Vec<(Entity, f32)>,
 }
 
-///////////////////////////////// Terrain Morphing /////////////////////////////////////////
+///////////////////////////////// Terrain Changes /////////////////////////////////////////
+/// TODO: should this attach a component to the entity if the tile changes? or signal event?
 /// Gives this entity a new tiletype if weather conditions are met
 fn morph_terrain_system(
-    mut query: Query<(
-        Entity,
-        &WaterElevation,
-        &SoilElevation,
-        &BedrockElevation,
-        &Humidity,
-        &mut TileType,
-    )>,
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(Entity, &ElevationBundle, &Humidity, &mut TileType)>,
 ) {
-    for (_entity, water_level, soil_level, bedrock_level, humidity, mut tile_type) in
-        query.iter_mut()
-    {
-        let mut tile_probabilities = humidity.apply_weather(&tile_type);
-        // let water_probabilities = (*&water_level, *&soil_level).apply_weather(&tile_type);
-
-        tile_probabilities.extend((*&water_level, *&soil_level).apply_weather(&tile_type));
+    debug.fn_order.push("morph_terrain_system".to_string());
+    for (_entity, elevation, humidity, mut tile_type) in query.iter_mut() {
+        // humidity effects
+        let tile_probabilities = humidity.apply_weather(&tile_type);
 
         let new_tile = tile_probabilities.pick_random();
         *tile_type = new_tile;
@@ -179,95 +247,119 @@ fn morph_terrain_system(
 }
 
 fn update_terrain_assets(
-    query: Query<(Entity, &TileType, &HexCoordinates, &BedrockElevation)>,
-    asset_server: Res<AssetServer>,
-    mut commands: Commands,
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(
+        Entity,
+        &TileType,
+        &HexCoordinates,
+        &ElevationBundle,
+        &mut Transform,
+        &mut Handle<Mesh>,
+        &mut Handle<StandardMaterial>,
+    )>,
+    tile_assets: Res<TileAssets>,
+    mut next_state: ResMut<NextState<GameStates>>,
 ) {
-    let tile_assets = tiles::TileAssets::new(&asset_server);
-
-    // println!("Updating terrain mesh");
-    for (entity, tile_type, hex, altitude) in query.iter() {
+    debug.fn_order.push("update_terrain_assets".to_string());
+    for (_entity, tile_type, hex, altitude, mut transform, mut mesh_handle, mut material_handle) in
+        query.iter_mut()
+    {
         let world_pos = pointy_layout().hex_to_world_pos(hex.0);
 
-        let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
-        // update entity with new mesh and material
-        commands.entity(entity).insert(PbrBundle {
-            transform: Transform::from_xyz(world_pos.x, altitude.value, world_pos.y)
-                .with_scale(Vec3::splat(2.0)),
-            mesh: mesh_handle,
-            material: material_handle,
-            ..default()
-        });
+        let total_height = altitude.bedrock.value + altitude.soil.value + altitude.water.value;
+
+        let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
+
+        // update entity with new mesh, material and transform
+        *transform = Transform::from_xyz(world_pos.x, total_height, world_pos.y)
+            .with_scale(Vec3::splat(2.0));
+        *mesh_handle = new_mesh_handle;
+        *material_handle = new_material_handle;
     }
+
+    // Finish epoch
+    next_state.set(GameStates::Loading);
 }
 
 /////////////////////////////////Weather Systems//////////////////////////////////////////////////
 
-#[derive(Default, Resource)]
-struct GroundWaterUpdates(HashMap<Entity, f32>);
-
 fn precipitation_system(
+    mut debug: ResMut<Epochs>,
     mut query: Query<(
         &Humidity,
         &mut Precipitation,
         &TileType,
-        &mut WaterElevation,
+        &mut ElevationBundle,
     )>,
 ) {
+    debug.fn_order.push("precipitation_system".to_string());
+    println!("precipitation_system");
     for (humidity, mut precipitation, tile_type, mut water_level) in query.iter_mut() {
         // Calculate precipitation
         precipitation.value +=
             humidity.value * PRECIPITATION_FACTOR * tile_type.precipitation_factor();
-        water_level.value += precipitation.value;
-        println!("Precipitation: {}", precipitation.value);
+
+        println!("precipitation: {}", precipitation.value);
+        water_level.water.value += tile_type.handle_precipitation(precipitation.value);
     }
+
+    assert!(query.iter().len() > 0);
 }
 
-fn evaporation_system(mut query: Query<(&WaterElevation, &mut Humidity, &Temperature)>) {
-    for (water_elevation, mut humidity, temperature) in query.iter_mut() {
+// TODO: positive temperature component?
+fn evaporation_system(
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(&mut ElevationBundle, &mut Humidity, &Temperature, &TileType)>,
+) {
+    debug.fn_order.push("evaporation_system".to_string());
+    // println!("evaporation_system");
+    for (mut elevation, mut humidity, temperature, tile_type) in query.iter_mut() {
         // Calculate evaporation
-        let evaporation = temperature.value.max(0.0) * water_elevation.value * EVAPORATION_FACTOR;
+        // println!(
+        //     "temperature, elevation.water: {}, {}",
+        //     temperature.value, elevation.water.value
+        // );
+        let evaporation = temperature.value.max(0.0) * elevation.water.value * EVAPORATION_FACTOR;
+        // println!("evaporation: {}", evaporation);
+        assert!(evaporation <= elevation.water.value);
         // Update humidity
         humidity.value += evaporation;
+        elevation.water.value = tile_type.handle_evaporation(evaporation);
     }
 }
 
 ///////////////////////////////// Terrain Analysis systems /////////////////////////////////////////
 
 fn calculate_neighbour_heights_system(
+    mut debug: ResMut<Epochs>,
     mut query: Query<(
         Entity,
-        &BedrockElevation,
+        &ElevationBundle,
         &Neighbours,
-        &WaterElevation,
-        &SoilElevation,
         &mut LowerNeighbours,
         &mut HigherNeighbours,
     )>,
-    neighbour_query: Query<(&BedrockElevation, &WaterElevation, &SoilElevation)>,
+    neighbour_query: Query<&ElevationBundle>,
+    mut next_game_state: ResMut<NextState<GameStates>>,
 ) {
-    for (
-        _entity,
-        elevation,
-        neighbours,
-        water_level,
-        soil_level,
-        mut lower_neighbours,
-        mut higher_neighbours,
-    ) in query.iter_mut()
+    debug
+        .fn_order
+        .push("calculate_neighbour_heights_system".to_string());
+    for (_entity, elevation, neighbours, mut lower_neighbours, mut higher_neighbours) in
+        query.iter_mut()
     {
-        let this_entity_height = elevation.value + water_level.value + soil_level.value;
+        let this_entity_height =
+            elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
         // Reset the lists of lower and higher neighbours
         lower_neighbours.ids.clear();
         higher_neighbours.ids.clear();
 
         for neighbour_id in &neighbours.ids {
-            if let Ok((neighbour_elevation, neighbour_water, neighbour_soil)) =
-                neighbour_query.get(*neighbour_id)
-            {
-                let neighbour_height =
-                    neighbour_elevation.value + neighbour_water.value + neighbour_soil.value;
+            if let Ok(neighbour_elevation) = neighbour_query.get(*neighbour_id) {
+                let neighbour_height = neighbour_elevation.bedrock.value
+                    + elevation.water.value
+                    + neighbour_elevation.soil.value;
 
                 // Add the neighbour to the appropriate list
                 if neighbour_height < this_entity_height {
@@ -280,6 +372,8 @@ fn calculate_neighbour_heights_system(
             }
         }
     }
+
+    next_game_state.set(GameStates::EpochRunning);
 }
 
 ///////////////////////////////// Humidity systems /////////////////////////////////////////
@@ -290,14 +384,18 @@ pub struct PendingHumidityRedistribution {
 }
 
 fn redistribute_humidity_system(
+    mut debug: ResMut<Epochs>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut Humidity, &TileType, &HigherNeighbours)>,
 ) {
-    for (entity, mut humidity, tile_type, higher_neighbours) in query.iter_mut() {
+    debug
+        .fn_order
+        .push("redistribute_humidity_system".to_string());
+    for (_entity, mut humidity, _tile_type, higher_neighbours) in query.iter_mut() {
         let humidity_to_escape = humidity.value * HUMIDITY_FACTOR;
         let num_higher_neighbours = higher_neighbours.ids.len() as f32;
 
-        for &(neighbour_id, neighbour_height) in &higher_neighbours.ids {
+        for &(neighbour_id, _neighbour_height) in &higher_neighbours.ids {
             let proportion = 1.0 / num_higher_neighbours;
             let humidity_for_neighbour = humidity_to_escape * proportion;
 
@@ -310,14 +408,20 @@ fn redistribute_humidity_system(
                     });
             }
         }
+        println!("humidity_to_escape: {}", humidity_to_escape);
         humidity.value -= humidity_to_escape;
     }
 }
 
 fn apply_humidity_redistribution(
+    mut debug: ResMut<Epochs>,
     mut commands: Commands,
     mut query: Query<(Entity, &mut Humidity, &PendingHumidityRedistribution)>,
+    mut next_state: ResMut<NextState<GameStates>>,
 ) {
+    debug
+        .fn_order
+        .push("apply_humidity_redistribution".to_string());
     for (entity, mut humidity, redistribution) in query.iter_mut() {
         humidity.value += redistribution.amount;
         // Remove the PendingHumidityRedistribution component
@@ -325,45 +429,45 @@ fn apply_humidity_redistribution(
             .entity(entity)
             .remove::<PendingHumidityRedistribution>();
     }
+
+    next_state.set(GameStates::EpochFinish);
 }
 
 ///////////////////////////////// Overflow systems /////////////////////////////////////////
 #[derive(Debug, Clone, Component)]
 struct IncomingOverflow {
-    value: f32,
+    water: f32,
+    soil: f32,
 }
 
 fn calculate_overflow_system(
-    mut query: Query<(
-        Entity,
-        &SoilElevation,
-        &WaterElevation,
-        &mut Overflow,
-        &TileType,
-    )>,
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(Entity, &ElevationBundle, &mut Overflow, &TileType)>,
 ) {
-    for (_entity, soil_elevation, water_elevation, mut overflow, tiletype) in query.iter_mut() {
-        overflow.value += tiletype.overflow_amount(water_elevation.value, soil_elevation.value);
+    debug.fn_order.push("calculate_overflow_system".to_string());
+    for (_entity, elevation, mut overflow, tiletype) in query.iter_mut() {
+        overflow.value += tiletype.overflow_amount(elevation.water.value, elevation.soil.value);
     }
 }
 
 // takes in the overflow and creates a component for each lower neighbour, containing their share of the overflow
 fn redistribute_overflow_system(
+    mut debug: ResMut<Epochs>,
     mut query: Query<(
         Entity,
         &mut Overflow,
-        &mut WaterElevation,
-        &mut SoilElevation,
-        &mut BedrockElevation,
+        &mut ElevationBundle,
         &LowerNeighbours,
     )>,
     mut commands: Commands,
     mut incoming_overflow_query: Query<&mut IncomingOverflow>,
 ) {
-    for (_entity, mut overflow, mut water_level, soil_level, bedrock_level, lower_neighbours) in
-        query.iter_mut()
-    {
-        let this_entity_height = bedrock_level.value + water_level.value + soil_level.value;
+    debug
+        .fn_order
+        .push("redistribute_overflow_system".to_string());
+    for (_entity, mut overflow, mut elevation, lower_neighbours) in query.iter_mut() {
+        let this_entity_height =
+            elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
         // Get the total altitude difference with lower neighbours
         let total_difference: f32 = lower_neighbours
@@ -374,7 +478,7 @@ fn redistribute_overflow_system(
 
         // If there are no lower neighbours, add the overflow to the water level
         if total_difference == 0.0 {
-            water_level.value += overflow.value;
+            elevation.water.value += overflow.value;
             overflow.value = 0.0;
             continue;
         }
@@ -387,20 +491,23 @@ fn redistribute_overflow_system(
         for &(neighbour_id, neighbour_height) in &lower_neighbours.ids {
             let difference = (this_entity_height - neighbour_height).max(0.0);
             let proportion = difference / total_difference;
-            let overflow_for_neighbour = overflow.value * proportion;
+            let water_overflow_for_neighbour = overflow.value * proportion;
+            let soil_overflow_for_neighbour =
+                water_overflow_for_neighbour * elevation.soil.value * EROSION_FACTOR;
 
             if let Ok(mut incoming_overflow) = incoming_overflow_query.get_mut(neighbour_id) {
-                incoming_overflow.value += overflow_for_neighbour;
+                incoming_overflow.water += water_overflow_for_neighbour;
+                incoming_overflow.soil += soil_overflow_for_neighbour;
             } else {
                 commands.entity(neighbour_id).insert(IncomingOverflow {
-                    value: overflow_for_neighbour,
+                    water: water_overflow_for_neighbour,
+                    soil: soil_overflow_for_neighbour,
                 });
             }
         }
 
-        println!("Overflow: {}", overflow.value);
-        println!("Water level: {}", water_level.value);
-        water_level.value -= overflow.value;
+        elevation.water.value -= overflow.value;
+        elevation.soil.value -= overflow.value * elevation.soil.value * EROSION_FACTOR;
         overflow.value = 0.0;
     }
 }
@@ -408,26 +515,34 @@ fn redistribute_overflow_system(
 // Groundwater overflow is applied to this neighbours water level
 // TODO: add soil or make seperate function for soil
 fn apply_water_overflow(
-    mut query: Query<(Entity, &mut WaterElevation, &IncomingOverflow), Added<IncomingOverflow>>,
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(Entity, &mut ElevationBundle, &IncomingOverflow), Added<IncomingOverflow>>,
     mut commands: Commands,
 ) {
-    for (entity, mut water_level, incoming_overflow) in query.iter_mut() {
-        water_level.value += incoming_overflow.value;
+    debug.fn_order.push("apply_water_overflow".to_string());
+    for (entity, mut elevation, incoming_overflow) in query.iter_mut() {
+        elevation.water.value += incoming_overflow.water;
+        elevation.soil.value += incoming_overflow.soil;
+
         commands.entity(entity).remove::<IncomingOverflow>();
     }
 }
 
 ////////////////////////////////////////// App /////////////////////////////////////////
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
-pub enum GroundWaterSystemSet {
+// Replace the u8 with unit (), since we don't need to keep track of the number of executions anymore
+#[derive(Clone, Eq, PartialEq, Debug, Hash, States)]
+pub enum GameStates {
+    Loading,
     EpochStart,
-    LocalWeather,
-    TerrainAnalysis,
-    RedistributeOverflow,
-    ApplyWaterOverflow,
-    TerrainMetamorphis,
-    VisualUpdate,
+    EpochRunning,
+    EpochFinish,
+}
+
+impl Default for GameStates {
+    fn default() -> Self {
+        GameStates::EpochStart
+    }
 }
 
 fn main() {
@@ -436,7 +551,8 @@ fn main() {
             brightness: 0.1,
             ..default()
         })
-        .insert_resource(FixedTime::new_from_secs(5.0))
+        .insert_resource(FixedTime::new_from_secs(3.0))
+        .insert_resource(Epochs::default())
         .add_plugins(DefaultPlugins)
         .add_plugins(
             DefaultPickingPlugins
@@ -446,61 +562,55 @@ fn main() {
         .add_plugin(CameraControllerPlugin)
         .add_plugin(EguiPlugin)
         .add_startup_system(setup_camera)
-        .add_startup_system(setup_grid)
         .add_startup_system(play_tunes)
+        .add_startup_system(load_tile_assets)
+        .add_startup_system(setup_grid.after(load_tile_assets))
         .add_system(ui_example)
         .add_system(bevy::window::close_on_esc)
-        .add_system(
-            epoch_system
-                .in_set(GroundWaterSystemSet::EpochStart)
-                .in_schedule(CoreSchedule::FixedUpdate),
-        )
-        .add_systems(
-            (
-                precipitation_system,
-                evaporation_system,
-                calculate_overflow_system,
-            )
-                .in_set(GroundWaterSystemSet::LocalWeather)
-                .after(GroundWaterSystemSet::EpochStart),
-        )
-        .add_system(
-            calculate_neighbour_heights_system
-                .in_set(GroundWaterSystemSet::TerrainAnalysis)
-                .after(GroundWaterSystemSet::LocalWeather),
-        )
-        .add_systems(
-            (redistribute_overflow_system, redistribute_humidity_system)
-                .in_set(GroundWaterSystemSet::RedistributeOverflow)
-                .after(GroundWaterSystemSet::TerrainAnalysis),
-        )
-        .add_systems(
-            (apply_water_overflow, apply_humidity_redistribution)
-                .in_set(GroundWaterSystemSet::ApplyWaterOverflow)
-                .after(GroundWaterSystemSet::RedistributeOverflow),
-        )
-        .add_system(
-            morph_terrain_system
-                .in_set(GroundWaterSystemSet::TerrainMetamorphis)
-                .after(GroundWaterSystemSet::ApplyWaterOverflow),
-        )
-        .add_system(
-            update_terrain_assets
-                .in_set(GroundWaterSystemSet::VisualUpdate)
-                .after(GroundWaterSystemSet::TerrainMetamorphis),
-        )
+        .add_state::<GameStates>()
+        .add_system(start_epoch)
+        .add_system(precipitation_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        .add_system(evaporation_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        .add_system(calculate_overflow_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        .add_system(calculate_neighbour_heights_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        .add_system(redistribute_humidity_system.in_schedule(OnExit(GameStates::EpochStart)))
+        .add_system(redistribute_overflow_system.in_schedule(OnExit(GameStates::EpochStart)))
+        .add_system(apply_water_overflow.in_schedule(OnEnter(GameStates::EpochRunning)))
+        .add_system(apply_humidity_redistribution.in_schedule(OnEnter(GameStates::EpochRunning)))
+        .add_system(morph_terrain_system.in_schedule(OnExit(GameStates::EpochRunning)))
+        .add_system(update_terrain_assets.in_schedule(OnEnter(GameStates::EpochFinish)))
         .run();
 }
 
-fn epoch_system() {
-    println!("Epoch");
+fn start_epoch(
+    mut epochs: ResMut<Epochs>,
+    keypress: Res<Input<KeyCode>>,
+    mut next_state: ResMut<NextState<GameStates>>,
+) {
+    if keypress.just_pressed(KeyCode::Space) {
+        println!("=== Epoch: {} ===\n", epochs.epochs);
+        epochs.epochs += 1;
+        for epoch in epochs.fn_order.iter() {
+            println!(" ---> {}", epoch);
+        }
+
+        next_state.set(GameStates::EpochStart);
+        epochs.fn_order.clear();
+    }
+}
+
+fn load_tile_assets(asset_server: Res<AssetServer>, mut commands: Commands) {
+    let tile_assets = tiles::TileAssets::new(&asset_server);
+    commands.insert_resource(tile_assets);
 }
 
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let world = WorldAttributes::new();
+
     // load all gltf files from assets folder
     let tile_assets = tiles::TileAssets::new(&asset_server);
+
     // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> = shapes::hexagon(Hex::ZERO, MAP_RADIUS).collect();
 
@@ -512,12 +622,12 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     // Spawn tiles
     for hex in all_hexes.clone() {
-        let altitude = altitude_map.get(&hex).unwrap().clone();
-        let temperature = temperature_map.get(&hex).unwrap().clone();
+        let altitude = *altitude_map.get(&hex).unwrap();
+        let temperature = *temperature_map.get(&hex).unwrap();
 
         // spawn tile based on altitude and temperature
         let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
-        let (mesh_handle, material_handle) = tile_assets.mesh_and_material(&tile_type);
+        let (mesh_handle, material_handle) = tile_assets.get_mesh_and_material(&tile_type);
 
         // hex -> world position
         let pos = pointy_layout().hex_to_world_pos(hex);
@@ -535,20 +645,13 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 PickableBundle::default(),    // <- Makes the mesh pickable.
                 RaycastPickTarget::default(), // <- Needed for the raycast backend.
                 OnPointer::<Click>::run_callback(terrain_callback),
-                // Terrain::new(hex, tile_type, altitude, temperature),
-                BedrockElevation { value: altitude },
-                WaterElevation {
-                    value: tile_type.default_ground_water(),
-                },
-                SoilElevation {
-                    value: tile_type.default_soil(),
-                },
-                Humidity {
-                    value: tile_type.default_humidity(),
-                },
+                ElevationBundle::from((tile_type, BedrockElevation { value: altitude })),
+                Humidity::from(tile_type),
                 Temperature { value: temperature },
+                Evaporation { value: 0.0 },
+                Precipitation { value: 0.0 },
                 Overflow { value: 0.0 }, // TODO: should this be calculated before epoch?
-                HexCoordinates { 0: hex },
+                HexCoordinates(hex),
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
                 LowerNeighbours { ids: vec![] }, // populate once weather has run
                 HigherNeighbours { ids: vec![] }, // populate once weather has run
@@ -580,20 +683,14 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 fn terrain_callback(
     // The first parameter is always the `ListenedEvent`, passed in by the event listening system.
     In(event): In<ListenedEvent<Click>>,
-    query: Query<(
-        Entity,
-        &WaterElevation,
-        &SoilElevation,
-        &Overflow,
-        &Humidity,
-    )>,
+    query: Query<(Entity, &ElevationBundle, &Overflow, &Humidity)>,
 ) -> Bubble {
     // Get the entity and its terrain
-    for (entity, water_level, soil_level, overflow, humidity) in query.iter() {
+    for (entity, elevation, overflow, humidity) in query.iter() {
         if entity == event.target {
             println!(
                 "Entity: {:?}, water: {:?}, soil: {:?}, overflow: {:?}, humidity: {:?}",
-                entity, water_level, soil_level, overflow, humidity
+                entity, elevation.water, elevation.soil, overflow, humidity
             );
             println!("\n\n");
             break;
