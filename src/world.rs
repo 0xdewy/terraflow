@@ -3,6 +3,8 @@ use hexx::*;
 use rand::prelude::SliceRandom;
 use std::collections::HashMap;
 
+use crate::{MOUNTAIN_POINT, HILL_POINT};
+
 use super::tiles::TileType;
 use super::utils::RandomSelection;
 use super::{
@@ -155,8 +157,8 @@ impl TileTypeGenerator for WorldAttributes {
             t if t <= 0.0 => TileType::Ice,
             _ => match altitude {
                 a if a <= self.altitude.sea_level => TileType::Ocean,
-                a if a >= self.altitude.highest_elevation * 0.90 => TileType::Mountain,
-                a if a >= self.altitude.highest_elevation * 0.70 => {
+                a if a >= self.altitude.highest_elevation * MOUNTAIN_POINT => TileType::Mountain,
+                a if a >= self.altitude.highest_elevation * HILL_POINT => {
                     vec![TileType::Hills, TileType::Rocky].pick_random()
                 }
                 _ => {
@@ -170,35 +172,5 @@ impl TileTypeGenerator for WorldAttributes {
         }
     }
 }
-
-// TODO: handle visual changes to tiles
-// Only effects the visuals of the tile
-// trait VisualModifier {
-//     fn altitude_tile_change(&self, tile_type: TileType, altitude: f32) -> TileType;
-// }
-
-// impl VisualModifier for WorldAttributes {
-//     fn altitude_tile_change(&self, tile_type: TileType, altitude: f32) -> TileType {
-//         // Change dirt -> rocky
-//         // grass -> hills
-//         match tile_type {
-//             TileType::Dirt => {
-//                 if altitude >= self.altitude.highest_elevation * 0.6 {
-//                     TileType::Rocky
-//                 } else {
-//                     TileType::Dirt
-//                 }
-//             }
-//             TileType::Grass => {
-//                 if altitude >= self.altitude.highest_elevation * 0.6 {
-//                     TileType::Hills
-//                 } else {
-//                     TileType::Grass
-//                 }
-//             }
-//             _ => tile_type,
-//         }
-//     }
-// }
 
 ///////////////////////////////////////// Randomness ////////////////////////////////////////////////

@@ -1,6 +1,11 @@
 use bevy::prelude::*;
 
-use super::{Humidity, SoilElevation, WaterElevation, TERRAIN_CHANGE_SENSITIVITY};
+use crate::{BedrockElevation, HILL_POINT, MOUNTAIN_POINT, SEA_LEVEL};
+
+use super::{
+    Humidity, SoilElevation, WaterElevation, EVAPORATION_FACTOR, PRECIPITATION_FACTOR,
+    TERRAIN_CHANGE_SENSITIVITY,
+};
 
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount, EnumIter};
@@ -47,7 +52,7 @@ impl TileType {
     pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
             TileType::Ocean => 0.0,
-            _ => (water_elevation - soil_elevation).max(0.0),
+            _ => (water_elevation - soil_elevation - 1.0).max(0.0),
         }
     }
 
@@ -64,12 +69,9 @@ impl TileType {
     // // 1.0 = everything escapes, 0.0 = nothing escapes
     pub fn precipitation_factor(&self) -> f32 {
         match self {
-            TileType::Ocean | TileType::Water => 0.1,
-            TileType::Dirt | TileType::Desert | TileType::Waste => 0.2,
-            TileType::Swamp => 0.2,
-            TileType::Ice | TileType::Grass | TileType::Forest => 0.5,
-            TileType::Hills | TileType::Rocky | TileType::Jungle => 0.7,
+            TileType::Hills | TileType::Rocky => 0.7,
             TileType::Mountain => 0.9,
+            _ => PRECIPITATION_FACTOR,
         }
     }
 }
@@ -146,12 +148,14 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
             match tile_type {
                 TileType::Ocean | TileType::Water => return vec![(TileType::Ocean, CERTAIN)],
                 TileType::Mountain => return vec![(TileType::Rocky, LOW_ODDS)],
-                TileType::Rocky => return vec![(TileType::Dirt, LOW_ODDS)],
+                TileType::Rocky => return vec![(TileType::Dirt, MED_ODDS)],
                 TileType::Dirt => return vec![(TileType::Grass, LOW_ODDS)],
-                TileType::Grass => return vec![(TileType::Forest, LOW_ODDS)],
+                TileType::Grass => {
+                    return vec![(TileType::Forest, LOW_ODDS), (TileType::Water, MED_ODDS)]
+                }
                 TileType::Forest => return vec![(TileType::Jungle, LOW_ODDS)],
                 TileType::Jungle => return vec![(TileType::Swamp, LOW_ODDS)],
-                TileType::Swamp => return vec![(TileType::Water, LOW_ODDS)],
+                TileType::Swamp => return vec![(TileType::Water, MED_ODDS)],
                 _ => return vec![(*tile_type, CERTAIN)],
             }
         } else if self.below_limit(tile_type) {
@@ -187,7 +191,52 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
             TileType::Mountain => false,
             TileType::Ice => false,
             TileType::Swamp => self.0.value < self.1.value - TERRAIN_CHANGE_SENSITIVITY,
-            _ => false,
+            _ => self.0.value == 0.0,
+        }
+    }
+}
+
+// (BedrockElevation, MaxElevation)
+impl WeatherEffects for (&BedrockElevation, f32) {
+    fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
+        if self.exceeds_limit(tile_type) {
+            match tile_type {
+                TileType::Rocky => return vec![(TileType::Mountain, HIGH_ODDS)],
+                TileType::Hills => return vec![(TileType::Mountain, HIGH_ODDS)],
+                TileType::Ice => return vec![(TileType::Mountain, MED_ODDS)],
+                TileType::Dirt => return vec![(TileType::Rocky, HIGH_ODDS)],
+                TileType::Desert => return vec![(TileType::Rocky, HIGH_ODDS)],
+                TileType::Grass => return vec![(TileType::Hills, HIGH_ODDS)],
+                TileType::Ocean | TileType::Water => return vec![(*tile_type, CERTAIN)],
+                _ => return vec![(TileType::Hills, MED_ODDS)],
+            }
+        }
+        if self.below_limit(tile_type) {
+            match tile_type {
+                TileType::Mountain => return vec![(TileType::Rocky, HIGH_ODDS)],
+                TileType::Hills => return vec![(TileType::Grass, HIGH_ODDS)],
+                TileType::Rocky => return vec![(TileType::Dirt, HIGH_ODDS)],
+                _ => return vec![(TileType::Ocean, MED_ODDS)],
+            }
+        }
+
+        vec![(*tile_type, CERTAIN)]
+    }
+
+    fn exceeds_limit(&self, tile_type: &TileType) -> bool {
+        match tile_type {
+            TileType::Mountain => false,
+            TileType::Rocky | TileType::Hills => self.0.value / self.1 > MOUNTAIN_POINT,
+            TileType::Ice => self.0.value / self.1 > MOUNTAIN_POINT,
+            _ => self.0.value / self.1 > HILL_POINT,
+        }
+    }
+
+    fn below_limit(&self, tile_type: &TileType) -> bool {
+        match tile_type {
+            TileType::Mountain => self.0.value / self.1 < MOUNTAIN_POINT,
+            TileType::Rocky | TileType::Hills => self.0.value / self.1 < HILL_POINT,
+            _ => self.0.value < SEA_LEVEL,
         }
     }
 }

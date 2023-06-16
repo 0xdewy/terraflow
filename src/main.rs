@@ -34,13 +34,13 @@ pub const MAP_RADIUS: u32 = 50;
 
 /// The erosion factor determines how quickly terrain is eroded by water and wind. A higher value
 /// means faster erosion.
-pub const EROSION_FACTOR: f32 = 0.05;
+pub const EROSION_FACTOR: f32 = 0.20;
 
 /// The erosion scale is a scalar factor that is used to adjust the scale of the erosion effect.
 pub const EROSION_SCALE: f32 = 0.1;
 
 /// The precipitation factor affects how much rainfall occurs. A higher value means more rainfall.
-pub const PRECIPITATION_FACTOR: f32 = 0.03;
+pub const PRECIPITATION_FACTOR: f32 = 0.06;
 
 /// The humidity factor determines the overall humidity in the game world. A higher value results in
 /// a more humid environment.
@@ -52,11 +52,11 @@ pub const HUMIDITY_TRAVEL_FACTOR: f32 = 0.5;
 
 /// The evaporation factor determines how quickly water evaporates. Higher values lead to faster
 /// evaporation.
-pub const EVAPORATION_FACTOR: f32 = 0.002;
+pub const EVAPORATION_FACTOR: f32 = 0.01;
 
 /// The highest possible elevation in the game world. This value represents the maximum height that
 /// terrain can reach.
-pub const HIGHEST_ELEVATION: f32 = 10.0;
+pub const HIGHEST_ELEVATION: f32 = 20.0;
 
 /// The vulcanism factor determines the number of volcano spawn points
 /// Surrounding tiles form a general slope around the spawn point
@@ -68,7 +68,7 @@ pub const MOUNTAIN_SPREAD: f32 = (MAP_RADIUS * 60 / 100) as f32;
 
 /// The increment by which elevation is adjusted. This constant is used when creating the initial
 /// terrain and during terrain modification processes such as erosion and vulcanism.
-pub const ELEVATION_INCREMENT: f32 = 0.1;
+pub const ELEVATION_INCREMENT: f32 = 0.2;
 
 /// The sea level of the game world. Terrain with an elevation lower than this value will be
 /// underwater, while terrain with a higher elevation will be above water.
@@ -76,6 +76,12 @@ pub const SEA_LEVEL: f32 = 1.0;
 
 /// Lower this value to make terrain more sensitive to change
 pub const TERRAIN_CHANGE_SENSITIVITY: f32 = 0.1;
+
+// Tiles becomes mountains if the elevation / HIGHEST_ELEVATION is greater than this value
+pub const MOUNTAIN_POINT: f32 = 0.8;
+
+// Tiles becomes hills if the elevation / HIGHEST_ELEVATION is greater than this value
+pub const HILL_POINT: f32 = 0.6;
 
 /// Describes the orientation and tile size of a hexagon grid.
 pub fn pointy_layout() -> HexLayout {
@@ -91,7 +97,6 @@ pub fn pointy_layout() -> HexLayout {
 #[derive(Debug, Clone, Resource, Default)]
 pub struct Epochs {
     epochs: u16,
-    times_called: HashMap<Entity, u16>,
     fn_order: Vec<String>,
 }
 
@@ -113,7 +118,7 @@ pub struct ElevationBundle {
 impl From<(TileType, BedrockElevation)> for ElevationBundle {
     fn from(tile_type: (TileType, BedrockElevation)) -> Self {
         Self {
-            bedrock: tile_type.1.into(),
+            bedrock: tile_type.1,
             soil: tile_type.0.into(),
             water: tile_type.0.into(),
         }
@@ -239,7 +244,10 @@ fn morph_terrain_system(
     debug.fn_order.push("morph_terrain_system".to_string());
     for (_entity, elevation, humidity, mut tile_type) in query.iter_mut() {
         // humidity effects
-        let tile_probabilities = humidity.apply_weather(&tile_type);
+        let mut tile_probabilities = humidity.apply_weather(&tile_type);
+        tile_probabilities.extend((&elevation.water, &elevation.soil).apply_weather(&tile_type));
+        tile_probabilities
+            .extend((&elevation.bedrock, HIGHEST_ELEVATION).apply_weather(&tile_type));
 
         let new_tile = tile_probabilities.pick_random();
         *tile_type = new_tile;
@@ -293,42 +301,52 @@ fn precipitation_system(
     )>,
 ) {
     debug.fn_order.push("precipitation_system".to_string());
-    println!("precipitation_system");
     for (humidity, mut precipitation, tile_type, mut water_level) in query.iter_mut() {
         // Calculate precipitation
         precipitation.value +=
-            humidity.value * PRECIPITATION_FACTOR * tile_type.precipitation_factor();
+            humidity.value.powf(2.0) * PRECIPITATION_FACTOR * tile_type.precipitation_factor();
 
-        println!("precipitation: {}", precipitation.value);
+        // println!("precipitation: {}", precipitation.value);
+        if precipitation.value > 1.0 {
+            println!(
+                "precipitation: {}, water level: {} tiletype: {:?}",
+                precipitation.value, water_level.water.value, tile_type
+            );
+        }
+
         water_level.water.value += tile_type.handle_precipitation(precipitation.value);
     }
 
     assert!(query.iter().len() > 0);
 }
 
-// TODO: positive temperature component?
 fn evaporation_system(
     mut debug: ResMut<Epochs>,
     mut query: Query<(&mut ElevationBundle, &mut Humidity, &Temperature, &TileType)>,
 ) {
     debug.fn_order.push("evaporation_system".to_string());
-    // println!("evaporation_system");
     for (mut elevation, mut humidity, temperature, tile_type) in query.iter_mut() {
         // Calculate evaporation
-        // println!(
-        //     "temperature, elevation.water: {}, {}",
-        //     temperature.value, elevation.water.value
-        // );
-        let evaporation = temperature.value.max(0.0) * elevation.water.value * EVAPORATION_FACTOR;
-        // println!("evaporation: {}", evaporation);
-        assert!(evaporation <= elevation.water.value);
-        // Update humidity
+        let evaporation =
+            temperature.value.max(0.0) * elevation.water.value.powf(2.0) * EVAPORATION_FACTOR;
+
+        // Verify evaporation is non-negative
+        assert!(evaporation >= 0.0);
+        if evaporation > 0.5 {
+            println!(
+                "evaporation: {}, water level {}",
+                evaporation, elevation.water.value
+            );
+        }
+
+        // Update humidity and water level
         humidity.value += evaporation;
-        elevation.water.value = tile_type.handle_evaporation(evaporation);
+        elevation.water.value -= tile_type.handle_evaporation(evaporation);
     }
 }
 
 ///////////////////////////////// Terrain Analysis systems /////////////////////////////////////////
+///
 
 fn calculate_neighbour_heights_system(
     mut debug: ResMut<Epochs>,
@@ -408,7 +426,7 @@ fn redistribute_humidity_system(
                     });
             }
         }
-        println!("humidity_to_escape: {}", humidity_to_escape);
+        // println!("humidity_to_escape: {}", humidity_to_escape);
         humidity.value -= humidity_to_escape;
     }
 }
@@ -447,6 +465,10 @@ fn calculate_overflow_system(
     debug.fn_order.push("calculate_overflow_system".to_string());
     for (_entity, elevation, mut overflow, tiletype) in query.iter_mut() {
         overflow.value += tiletype.overflow_amount(elevation.water.value, elevation.soil.value);
+        // println!(
+        //     "overflow.value: {}, tiletype: {:?}",
+        //     overflow.value, tiletype
+        // );
     }
 }
 
@@ -531,18 +553,13 @@ fn apply_water_overflow(
 ////////////////////////////////////////// App /////////////////////////////////////////
 
 // Replace the u8 with unit (), since we don't need to keep track of the number of executions anymore
-#[derive(Clone, Eq, PartialEq, Debug, Hash, States)]
+#[derive(Clone, Eq, PartialEq, Debug, Hash, States, Default)]
 pub enum GameStates {
     Loading,
+    #[default]
     EpochStart,
     EpochRunning,
     EpochFinish,
-}
-
-impl Default for GameStates {
-    fn default() -> Self {
-        GameStates::EpochStart
-    }
 }
 
 fn main() {
@@ -569,19 +586,24 @@ fn main() {
         .add_system(bevy::window::close_on_esc)
         .add_state::<GameStates>()
         .add_system(start_epoch)
+        // initial weather phase
         .add_system(precipitation_system.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(evaporation_system.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(calculate_overflow_system.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(calculate_neighbour_heights_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        // calculate neighbour effects
         .add_system(redistribute_humidity_system.in_schedule(OnExit(GameStates::EpochStart)))
         .add_system(redistribute_overflow_system.in_schedule(OnExit(GameStates::EpochStart)))
+        // apply effects on neighbours
         .add_system(apply_water_overflow.in_schedule(OnEnter(GameStates::EpochRunning)))
         .add_system(apply_humidity_redistribution.in_schedule(OnEnter(GameStates::EpochRunning)))
+        // update terrain assets and map
         .add_system(morph_terrain_system.in_schedule(OnExit(GameStates::EpochRunning)))
         .add_system(update_terrain_assets.in_schedule(OnEnter(GameStates::EpochFinish)))
         .run();
 }
 
+// Move the epoch forward on keystroke
 fn start_epoch(
     mut epochs: ResMut<Epochs>,
     keypress: Res<Input<KeyCode>>,
@@ -683,14 +705,14 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 fn terrain_callback(
     // The first parameter is always the `ListenedEvent`, passed in by the event listening system.
     In(event): In<ListenedEvent<Click>>,
-    query: Query<(Entity, &ElevationBundle, &Overflow, &Humidity)>,
+    query: Query<(Entity, &ElevationBundle, &Humidity)>,
 ) -> Bubble {
     // Get the entity and its terrain
-    for (entity, elevation, overflow, humidity) in query.iter() {
+    for (entity, elevation, humidity) in query.iter() {
         if entity == event.target {
             println!(
-                "Entity: {:?}, water: {:?}, soil: {:?}, overflow: {:?}, humidity: {:?}",
-                entity, elevation.water, elevation.soil, overflow, humidity
+                "Entity: {:?}, elevation: {:?}, humidity: {:?}",
+                entity, elevation, humidity
             );
             println!("\n\n");
             break;
@@ -701,8 +723,8 @@ fn terrain_callback(
 }
 //////////////////////////////Music//////////////////////////////
 fn play_tunes(asset_server: Res<AssetServer>, audio: Res<Audio>) {
-    let music = asset_server.load("music/intersteller_dreams.wav");
-    audio.play(music);
+    // let music = asset_server.load("music/ganymede_orbiter.wav");
+    // audio.play(music);
 }
 
 //////////////////////////////InfoBox//////////////////////////////
@@ -740,5 +762,3 @@ fn setup_camera(mut commands: Commands) {
         ..default()
     });
 }
-
-////////////////////////////// Terrain ///////////////////////////////////////////
