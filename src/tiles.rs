@@ -52,7 +52,7 @@ impl TileType {
     pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
             TileType::Ocean => 0.0,
-            _ => (water_elevation - soil_elevation - 1.0).max(0.0),
+            _ => (water_elevation - soil_elevation).max(0.0),
         }
     }
 
