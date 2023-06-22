@@ -178,13 +178,12 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         let pos = pointy_layout(world.map.hex_size).hex_to_world_pos(hex);
 
         let amount_below_sea_level = (world.elevation.sea_level - altitude).max(0.0);
-        
+
         // create terrain entity
         let id = commands
             .spawn((
                 PbrBundle {
-                    transform: Transform::from_xyz(pos.x, altitude + amount_below_sea_level, pos.y)
-                        .with_scale(Vec3::splat(2.0)),
+                    transform: Transform::from_xyz(pos.x, 0.0, pos.y).with_scale(Vec3::splat(2.0)),
                     mesh: mesh_handle,
                     material: material_handle,
                     ..default()
@@ -197,7 +196,10 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 Temperature { value: temperature },
                 Evaporation { value: 0.0 },
                 Precipitation { value: 0.0 },
-                Overflow { water: 0.0, soil: 0.0 }, // TODO: should this be removed?
+                Overflow {
+                    water: 0.0,
+                    soil: 0.0,
+                }, // TODO: should this be removed?
                 HexCoordinates(hex),
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
                 LowerNeighbours { ids: vec![] }, // populate once weather has run

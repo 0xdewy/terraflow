@@ -61,10 +61,22 @@ impl TileType {
         }
     }
 
-    pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
+    pub fn handle_ground_water_overflow(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
             TileType::Ocean => 0.0,
             _ => (water_elevation - soil_elevation).max(0.0),
+        }
+    }
+
+    pub fn handle_soil_overflow(
+        &self,
+        water_overflow: f32,
+        soil_elevation: f32,
+        erosion_factor: f32,
+    ) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => (water_overflow * soil_elevation * erosion_factor).max(0.0),
         }
     }
 
@@ -83,6 +95,7 @@ impl TileType {
         match self {
             TileType::Hills | TileType::Rocky => 0.7,
             TileType::Mountain => 0.9,
+            TileType::Ocean => 0.1,
             _ => precipitation_factor,
         }
     }

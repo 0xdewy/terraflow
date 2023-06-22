@@ -88,9 +88,9 @@ pub fn update_terrain_assets(
     {
         let world_pos = pointy_layout(map_attributes.hex_size).hex_to_world_pos(hex.0);
 
-        let total_height = altitude.bedrock.value
-            + ((altitude.soil.value + altitude.water.value)
-                * elevation_attributes.soil_and_water_height_display_factor);
+        // let total_height = altitude.bedrock.value
+        //     + ((altitude.soil.value + altitude.water.value)
+        //         * elevation_attributes.soil_and_water_height_display_factor);
 
         let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
 
@@ -99,8 +99,7 @@ pub fn update_terrain_assets(
         commands.entity(entity).remove::<RaycastPickTarget>();
 
         // update entity with new mesh, material and transform
-        *transform = Transform::from_xyz(world_pos.x, total_height, world_pos.y)
-            .with_scale(Vec3::splat(2.0));
+        *transform = Transform::from_xyz(world_pos.x, 0.0, world_pos.y).with_scale(Vec3::splat(2.0));
         *mesh_handle = new_mesh_handle;
         *material_handle = new_material_handle;
 
@@ -221,7 +220,8 @@ pub fn calculate_neighbour_heights_system(
                 // Add the neighbour to the appropriate list
                 if neighbour_height < this_entity_height {
                     lower_neighbours.ids.push((*neighbour_id, neighbour_height));
-                } else if neighbour_height > this_entity_height {
+                } else if neighbour_height >= this_entity_height {
+                    // Include equal level into higher_neighbours
                     higher_neighbours
                         .ids
                         .push((*neighbour_id, neighbour_height));
@@ -310,9 +310,14 @@ pub fn calculate_overflow_system(
 ) {
     debug.fn_order.push("calculate_overflow_system".to_string());
     for (_entity, elevation, mut overflow, tiletype) in query.iter_mut() {
-        overflow.water = tiletype.overflow_amount(elevation.water.value, elevation.soil.value);
+        overflow.water =
+            tiletype.handle_ground_water_overflow(elevation.water.value, elevation.soil.value);
 
-        overflow.soil = overflow.water * elevation.soil.value * erosion_attributes.erosion_factor;
+        overflow.soil = tiletype.handle_soil_overflow(
+            overflow.water,
+            elevation.soil.value,
+            erosion_attributes.erosion_factor,
+        );
         // println!(
         //     "water level {} overflow.value: {}, tiletype: {:?}",
         //     elevation.water.value, overflow.value, tiletype
