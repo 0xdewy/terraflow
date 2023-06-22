@@ -1,125 +1,147 @@
-use hexx::*;
+use bevy::prelude::*;
 
-use rand::prelude::SliceRandom;
-use std::collections::HashMap;
+use crate::tiles::TileType;
+use crate::utils::RandomSelection;
 
-use super::tiles::TileType;
-use super::utils::RandomSelection;
-use super::{
-    ELEVATION_INCREMENT, HIGHEST_ELEVATION, MAP_RADIUS, MOUNTAIN_SPREAD, SEA_LEVEL, VULCANISM,
-};
-
-#[derive(Debug, Clone)]
-pub struct AltitudeAttributes {
-    pub highest_elevation: f32,
-    pub vulcanism: f32,
-    pub mountain_spread: u32,
-    pub elevation_increment: f32,
-    pub sea_level: f32,
-}
-
-impl AltitudeAttributes {
-    pub fn new() -> Self {
-        Self {
-            highest_elevation: HIGHEST_ELEVATION,
-            vulcanism: VULCANISM,
-            mountain_spread: MOUNTAIN_SPREAD as u32,
-            elevation_increment: ELEVATION_INCREMENT,
-            sea_level: SEA_LEVEL,
-        }
-    }
-
-    pub fn increment_height(&self, current_height: &mut f32, distance: u32) {
-        let probability = 1.0 - (distance as f32 / self.mountain_spread as f32);
-        if rand::random::<f32>() < probability {
-            *current_height += self.elevation_increment;
-        }
-    }
-
-    pub fn generate_altitude_map(&self, all_hexes: &Vec<Hex>) -> HashMap<Hex, f32> {
-        let mut rng = rand::thread_rng();
-        let mut altitude_map: HashMap<Hex, f32> = all_hexes.iter().map(|hex| (*hex, 0.0)).collect();
-        let volcano_hexes: Vec<Hex> = all_hexes
-            .choose_multiple(&mut rng, self.vulcanism as usize)
-            .cloned()
-            .collect();
-
-        for hex in &volcano_hexes {
-            altitude_map.insert(*hex, self.elevation_increment);
-        }
-
-        self.raise_volcanoes(&mut altitude_map, &volcano_hexes);
-        altitude_map
-    }
-
-    fn raise_volcanoes(&self, altitude_map: &mut HashMap<Hex, f32>, volcano_hexes: &Vec<Hex>) {
-        let mut max_height = 0.0;
-        while max_height < self.highest_elevation {
-            for hex in volcano_hexes {
-                self.increment_height(altitude_map.get_mut(hex).unwrap(), 0);
-                max_height = max_height.max(altitude_map[hex]);
-                for rings_traversed in 1..=self.mountain_spread {
-                    for neighbour in hex.ring(rings_traversed) {
-                        if let Some(height) = altitude_map.get_mut(&neighbour) {
-                            self.increment_height(height, rings_traversed);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TemperatureAttributes {
-    pub base_temperature: f32,
-}
-
-impl TemperatureAttributes {
-    pub fn new() -> Self {
-        Self {
-            base_temperature: 50.0,
-        }
-    }
-
-    pub fn generate_temperature_map(&self, altitude_map: &HashMap<Hex, f32>) -> HashMap<Hex, f32> {
-        altitude_map
-            .iter()
-            .map(|(hex, &altitude)| (*hex, self.calculate_temperature(altitude, hex.y as f32)))
-            .collect()
-    }
-
-    fn calculate_temperature(&self, altitude: f32, latitude: f32) -> f32 {
-        const LATITUDE_TEMPERATURE_VARIATION: f32 = 60.0;
-        const ALTITUDE_TEMPERATURE_VARIATION: f32 = 2.5;
-        let normalized_y = latitude.abs() / MAP_RADIUS as f32;
-        let latitude_temperature_mod = normalized_y * LATITUDE_TEMPERATURE_VARIATION;
-        let altitude_temperature_mod = if altitude > 0.0 {
-            altitude * ALTITUDE_TEMPERATURE_VARIATION
-        } else {
-            0.0
-        };
-        self.base_temperature - altitude_temperature_mod - latitude_temperature_mod
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, serde::Deserialize)]
 pub struct WorldAttributes {
-    pub altitude: AltitudeAttributes,
+    pub erosion: ErosionAttributes,
+    pub elevation: ElevationAttributes,
     pub temperature: TemperatureAttributes,
+    pub map: MapAttributes,
+    pub ecosystem: EcosystemAttributes,
 }
 
 impl WorldAttributes {
-    pub fn new() -> Self {
+    pub fn load() -> Self {
+        let config_str = include_str!("../defaults.json");
+        let config: Config = serde_json::from_str(config_str).unwrap();
         Self {
-            altitude: AltitudeAttributes::new(),
-            temperature: TemperatureAttributes::new(),
+            erosion: ErosionAttributes::from(&config),
+            elevation: ElevationAttributes::from(&config),
+            temperature: TemperatureAttributes::from(&config),
+            map: MapAttributes::from(&config),
+            ecosystem: EcosystemAttributes::from(&config),
         }
     }
 }
 
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct ErosionAttributes {
+    pub erosion_factor: f32,
+    pub erosion_scale: f32,
+}
+
+impl From<&Config> for ErosionAttributes {
+    fn from(config: &Config) -> Self {
+        Self {
+            erosion_factor: config.erosion_factor,
+            erosion_scale: config.erosion_scale,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct ElevationAttributes {
+    pub highest_elevation: f32,
+    pub vulcanism: f32,
+    pub mountain_spread: f32,
+    pub elevation_increment: f32,
+    pub mountain_point: f32,
+    pub hill_point: f32,
+    pub sea_level: f32,
+    pub soil_and_water_height_display_factor: f32,
+}
+
+impl From<&Config> for ElevationAttributes {
+    fn from(config: &Config) -> Self {
+        Self {
+            highest_elevation: config.highest_elevation,
+            vulcanism: config.vulcanism,
+            mountain_spread: config.mountain_spread * config.map_radius as f32,
+            elevation_increment: config.elevation_increment,
+            mountain_point: config.mountain_point,
+            hill_point: config.hill_point,
+            sea_level: config.sea_level,
+            soil_and_water_height_display_factor: config.soil_and_water_height_display_factor,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct TemperatureAttributes {
+    pub base_temperature: f32,
+    pub latitude_temperature_variation: f32,
+    pub altitude_temperature_variation: f32,
+}
+
+impl From<&Config> for TemperatureAttributes {
+    fn from(config: &Config) -> Self {
+        Self {
+            base_temperature: config.base_temperature,
+            latitude_temperature_variation: config.latitude_temperature_variation,
+            altitude_temperature_variation: config.altitude_temperature_variation,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct MapAttributes {
+    pub hex_size: f32,
+    pub map_radius: u16,
+}
+
+impl From<&Config> for MapAttributes {
+    fn from(config: &Config) -> Self {
+        Self {
+            hex_size: config.hex_size,
+            map_radius: config.map_radius,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct EcosystemAttributes {
+    pub precipitation_factor: f32,
+    pub evaporation_factor: f32,
+    pub terrain_change_sensitivity: f32,
+}
+
+impl From<&Config> for EcosystemAttributes {
+    fn from(config: &Config) -> Self {
+        Self {
+            precipitation_factor: config.precipitation_factor,
+            evaporation_factor: config.evaporation_factor,
+            terrain_change_sensitivity: config.terrain_change_sensitivity,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Resource)]
+pub struct Config {
+    hex_size: f32,
+    map_radius: u16,
+    erosion_factor: f32,
+    erosion_scale: f32,
+    precipitation_factor: f32,
+    evaporation_factor: f32,
+    highest_elevation: f32,
+    vulcanism: f32,
+    mountain_spread: f32,
+    elevation_increment: f32,
+    sea_level: f32,
+    terrain_change_sensitivity: f32,
+    mountain_point: f32,
+    hill_point: f32,
+    soil_and_water_height_display_factor: f32,
+    base_temperature: f32,
+    latitude_temperature_variation: f32,
+    altitude_temperature_variation: f32,
+}
+
 ///////////////////////////////////////// TileGeneration ////////////////////////////////////////////////
-///
+
+// TODO: this doesn't need to be a trait
 pub trait TileTypeGenerator {
     fn spawn_tile(&self, latitude: f32, altitude: f32, temperature: f32) -> TileType;
 }
@@ -154,9 +176,11 @@ impl TileTypeGenerator for WorldAttributes {
         match temperature {
             t if t <= 0.0 => TileType::Ice,
             _ => match altitude {
-                a if a <= self.altitude.sea_level => TileType::Ocean,
-                a if a >= self.altitude.highest_elevation * 0.90 => TileType::Mountain,
-                a if a >= self.altitude.highest_elevation * 0.70 => {
+                a if a <= self.elevation.sea_level => TileType::Ocean,
+                a if a >= self.elevation.highest_elevation * self.elevation.mountain_point => {
+                    TileType::Mountain
+                }
+                a if a >= self.elevation.highest_elevation * self.elevation.hill_point => {
                     vec![TileType::Hills, TileType::Rocky].pick_random()
                 }
                 _ => {
@@ -170,35 +194,5 @@ impl TileTypeGenerator for WorldAttributes {
         }
     }
 }
-
-// TODO: handle visual changes to tiles
-// Only effects the visuals of the tile
-// trait VisualModifier {
-//     fn altitude_tile_change(&self, tile_type: TileType, altitude: f32) -> TileType;
-// }
-
-// impl VisualModifier for WorldAttributes {
-//     fn altitude_tile_change(&self, tile_type: TileType, altitude: f32) -> TileType {
-//         // Change dirt -> rocky
-//         // grass -> hills
-//         match tile_type {
-//             TileType::Dirt => {
-//                 if altitude >= self.altitude.highest_elevation * 0.6 {
-//                     TileType::Rocky
-//                 } else {
-//                     TileType::Dirt
-//                 }
-//             }
-//             TileType::Grass => {
-//                 if altitude >= self.altitude.highest_elevation * 0.6 {
-//                     TileType::Hills
-//                 } else {
-//                     TileType::Grass
-//                 }
-//             }
-//             _ => tile_type,
-//         }
-//     }
-// }
 
 ///////////////////////////////////////// Randomness ////////////////////////////////////////////////

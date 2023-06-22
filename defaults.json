@@ -1,0 +1,20 @@
+{
+    "hex_size": 2.0,
+    "map_radius": 100,
+    "erosion_factor": 0.40,
+    "erosion_scale": 0.1,
+    "precipitation_factor": 1.0,
+    "evaporation_factor": 1.0,
+    "highest_elevation": 10.0,
+    "vulcanism": 6.0,
+    "mountain_spread": 0.8,
+    "elevation_increment": 0.1,
+    "sea_level": 3.0,
+    "terrain_change_sensitivity": 0.3,
+    "mountain_point": 0.8,
+    "hill_point": 0.6,
+    "soil_and_water_height_display_factor": 0.25,
+    "base_temperature": 50.0,
+    "latitude_temperature_variation": 60.0,
+    "altitude_temperature_variation": 2.5
+}
