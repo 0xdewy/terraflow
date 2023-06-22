@@ -1,11 +1,9 @@
 use bevy::prelude::*;
 
-use crate::{BedrockElevation, HILL_POINT, MOUNTAIN_POINT, SEA_LEVEL};
+use crate::world::ElevationAttributes;
+use crate::{BedrockElevation, Humidity};
 
-use super::{
-    Humidity, SoilElevation, WaterElevation, EVAPORATION_FACTOR, PRECIPITATION_FACTOR,
-    TERRAIN_CHANGE_SENSITIVITY,
-};
+use crate::components::{SoilElevation, WaterElevation};
 
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::{EnumCount, EnumIter};
@@ -49,6 +47,20 @@ impl TileType {
         }
     }
 
+    pub fn handle_ground_water(&self, water_received: f32) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => water_received,
+        }
+    }
+
+    pub fn handle_soil(&self, soil_received: f32) -> f32 {
+        match self {
+            TileType::Ocean => 0.0,
+            _ => soil_received,
+        }
+    }
+
     pub fn overflow_amount(&self, water_elevation: f32, soil_elevation: f32) -> f32 {
         match self {
             TileType::Ocean => 0.0,
@@ -67,15 +79,16 @@ impl TileType {
     // }
 
     // // 1.0 = everything escapes, 0.0 = nothing escapes
-    pub fn precipitation_factor(&self) -> f32 {
+    pub fn precipitation_factor(&self, precipitation_factor: f32) -> f32 {
         match self {
             TileType::Hills | TileType::Rocky => 0.7,
             TileType::Mountain => 0.9,
-            _ => PRECIPITATION_FACTOR,
+            _ => precipitation_factor,
         }
     }
 }
 
+// TODO: add to config file
 const HIGH_HUMIDITY: f32 = 0.8;
 const LOW_HUMIDITY: f32 = 0.2;
 
@@ -142,7 +155,8 @@ impl WeatherEffects for Humidity {
     }
 }
 
-impl WeatherEffects for (&WaterElevation, &SoilElevation) {
+// (water_elevation, soil_elevation, terrain_change_sensitivity)
+impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
         if self.exceeds_limit(tile_type) {
             match tile_type {
@@ -175,11 +189,11 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
             TileType::Ocean | TileType::Water => false,
             TileType::Mountain => false,
             TileType::Ice => false,
-            TileType::Dirt => self.0.value > self.1.value + TERRAIN_CHANGE_SENSITIVITY,
-            TileType::Grass => self.0.value > self.1.value + TERRAIN_CHANGE_SENSITIVITY,
-            TileType::Forest => self.0.value > self.1.value + TERRAIN_CHANGE_SENSITIVITY,
-            TileType::Jungle => self.0.value > self.1.value + TERRAIN_CHANGE_SENSITIVITY,
-            TileType::Swamp => self.0.value > self.1.value + TERRAIN_CHANGE_SENSITIVITY,
+            TileType::Dirt => self.0.value > self.1.value + self.2,
+            TileType::Grass => self.0.value > self.1.value + self.2,
+            TileType::Forest => self.0.value > self.1.value + self.2,
+            TileType::Jungle => self.0.value > self.1.value + self.2,
+            TileType::Swamp => self.0.value > self.1.value + self.2,
             _ => false,
         }
     }
@@ -190,14 +204,14 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation) {
             TileType::Ocean => false,
             TileType::Mountain => false,
             TileType::Ice => false,
-            TileType::Swamp => self.0.value < self.1.value - TERRAIN_CHANGE_SENSITIVITY,
+            TileType::Swamp => self.0.value < self.1.value - self.2,
             _ => self.0.value == 0.0,
         }
     }
 }
 
 // (BedrockElevation, MaxElevation)
-impl WeatherEffects for (&BedrockElevation, f32) {
+impl WeatherEffects for (&BedrockElevation, &ElevationAttributes) {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
         if self.exceeds_limit(tile_type) {
             match tile_type {
@@ -226,17 +240,21 @@ impl WeatherEffects for (&BedrockElevation, f32) {
     fn exceeds_limit(&self, tile_type: &TileType) -> bool {
         match tile_type {
             TileType::Mountain => false,
-            TileType::Rocky | TileType::Hills => self.0.value / self.1 > MOUNTAIN_POINT,
-            TileType::Ice => self.0.value / self.1 > MOUNTAIN_POINT,
-            _ => self.0.value / self.1 > HILL_POINT,
+            TileType::Rocky | TileType::Hills => {
+                self.0.value / self.1.highest_elevation > self.1.mountain_point
+            }
+            TileType::Ice => self.0.value / self.1.highest_elevation > self.1.mountain_point,
+            _ => self.0.value / self.1.highest_elevation > self.1.hill_point,
         }
     }
 
     fn below_limit(&self, tile_type: &TileType) -> bool {
         match tile_type {
-            TileType::Mountain => self.0.value / self.1 < MOUNTAIN_POINT,
-            TileType::Rocky | TileType::Hills => self.0.value / self.1 < HILL_POINT,
-            _ => self.0.value < SEA_LEVEL,
+            TileType::Mountain => self.0.value / self.1.highest_elevation < self.1.mountain_point,
+            TileType::Rocky | TileType::Hills => {
+                self.0.value / self.1.highest_elevation < self.1.hill_point
+            }
+            _ => self.0.value < self.1.sea_level,
         }
     }
 }
