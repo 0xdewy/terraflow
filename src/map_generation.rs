@@ -10,7 +10,7 @@ pub fn increment_height(
     current_height: &mut f32,
     distance: u32,
 ) {
-    let probability = 1.0 - (distance as f32 / elevation_attributes.mountain_spread as f32);
+    let probability = 1.0 - (distance as f32 / elevation_attributes.mountain_spread);
     if rand::random::<f32>() < probability {
         *current_height += elevation_attributes.elevation_increment;
     }

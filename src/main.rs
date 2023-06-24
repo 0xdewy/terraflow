@@ -3,19 +3,17 @@ use bevy::prelude::*;
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_picking::prelude::*;
 
-use bevy_egui::{
-    egui::{self, ScrollArea},
-    EguiContexts, EguiPlugin,
-};
+use bevy_egui::EguiPlugin;
 
 // use hexx::shapes;
 use hexx::*;
 
 use std::collections::HashMap;
 
+mod benchmark;
 mod components;
 mod map_generation;
-mod tiles;
+mod terrain;
 mod ui;
 mod utils;
 mod weather_systems;
@@ -23,10 +21,11 @@ mod world;
 
 use components::{
     BedrockElevation, ElevationBundle, Evaporation, HexCoordinates, HigherNeighbours, Humidity,
-    LowerNeighbours, Neighbours, Overflow, Precipitation, Temperature,
+    HumidityReceived, HumiditySent, LowerNeighbours, Neighbours, Overflow, Precipitation,
+    Temperature,
 };
-use tiles::TileType;
-use ui::terrain_details;
+use terrain::TileType;
+use ui::{terrain_details, SelectedTile};
 use weather_systems::{
     apply_humidity_redistribution, apply_water_overflow, calculate_neighbour_heights_system,
     calculate_overflow_system, evaporation_system, morph_terrain_system, precipitation_system,
@@ -45,19 +44,6 @@ pub fn pointy_layout(hex_size: f32) -> HexLayout {
 
 ///////////////////////////////// Resources /////////////////////////////////////////
 ///
-
-#[derive(Debug, Clone, Default, Resource)]
-pub struct SelectedTile {
-    pub entity: Option<Entity>,
-    pub hex_coordinates: Option<HexCoordinates>,
-    pub elevation: Option<ElevationBundle>,
-    pub humidity: Option<Humidity>,
-    pub temperature: Option<Temperature>,
-    pub evaporation: Option<Evaporation>,
-    pub precipitation: Option<Precipitation>,
-    pub overflow: Option<Overflow>,
-    pub tile_type: Option<TileType>,
-}
 
 #[derive(Debug, Clone, Resource, Default)]
 pub struct Epochs {
@@ -88,6 +74,7 @@ fn main() {
         })
         .insert_resource(Epochs::default())
         .insert_resource(SelectedTile::default())
+        .insert_resource(benchmark::BenchmarkResource::default())
         .add_plugins(DefaultPlugins)
         .add_plugins(
             DefaultPickingPlugins
@@ -105,6 +92,7 @@ fn main() {
         .add_state::<GameStates>()
         .add_system(start_epoch)
         // initial weather phase
+        .add_system(benchmark::start_benchmark.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(precipitation_system.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(evaporation_system.in_schedule(OnEnter(GameStates::EpochStart)))
         .add_system(calculate_overflow_system.in_schedule(OnEnter(GameStates::EpochStart)))
@@ -118,6 +106,7 @@ fn main() {
         // update terrain assets and map
         .add_system(morph_terrain_system.in_schedule(OnExit(GameStates::EpochRunning)))
         .add_system(update_terrain_assets.in_schedule(OnEnter(GameStates::EpochFinish)))
+        .add_system(benchmark::end_benchmark.in_schedule(OnExit(GameStates::EpochFinish)))
         .run();
 }
 
@@ -140,8 +129,17 @@ fn start_epoch(
 }
 
 fn load_tile_assets(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let tile_assets = tiles::TileAssets::new(&asset_server);
+    let tile_assets = terrain::TileAssets::new(&asset_server);
     commands.insert_resource(tile_assets);
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct DebugWeatherBundle {
+    overflow: Overflow,
+    humidity_received: HumidityReceived,
+    humidity_sent: HumiditySent,
+    evaporation: Evaporation,
+    precipitation: Precipitation,
 }
 
 /// Hex grid setup
@@ -149,7 +147,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let world = WorldAttributes::load();
 
     // load all gltf files from assets folder
-    let tile_assets = tiles::TileAssets::new(&asset_server);
+    let tile_assets = terrain::TileAssets::new(&asset_server);
 
     // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> =
@@ -162,8 +160,6 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         world.map.map_radius,
         &altitude_map,
     );
-
-    let mut hex_to_entity = HashMap::new();
 
     // Spawn tiles
     for hex in all_hexes.clone() {
@@ -194,12 +190,16 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                 ElevationBundle::from(tile_type, altitude, amount_below_sea_level),
                 Humidity::from(tile_type),
                 Temperature { value: temperature },
-                Evaporation { value: 0.0 },
-                Precipitation { value: 0.0 },
-                Overflow {
-                    water: 0.0,
-                    soil: 0.0,
-                }, // TODO: should this be removed?
+                DebugWeatherBundle {
+                    evaporation: Evaporation { value: 0.0 },
+                    precipitation: Precipitation { value: 0.0 },
+                    overflow: Overflow {
+                        water: 0.0,
+                        soil: 0.0,
+                    },
+                    humidity_received: HumidityReceived { value: 0.0 },
+                    humidity_sent: HumiditySent { value: 0.0 },
+                },
                 HexCoordinates(hex),
                 Neighbours { ids: vec![] }, // populate once all entities are spawned
                 LowerNeighbours { ids: vec![] }, // populate once weather has run
@@ -208,26 +208,26 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
             ))
             .id();
 
-        hex_to_entity.insert(hex, id);
+        // hex_to_entity.insert(hex, id);
     }
 
-    // Populate `Neighbours` component for each entity
-    for hex in all_hexes {
-        let entity_id = hex_to_entity[&hex];
-        let neighbour_hexes = hex.ring(1);
-        let neighbour_ids = neighbour_hexes
-            .into_iter()
-            .filter_map(|neighbour_hex| hex_to_entity.get(&neighbour_hex))
-            .cloned()
-            .collect::<Vec<Entity>>();
+    // // Populate `Neighbours` component for each entity
+    // for hex in all_hexes {
+    //     let entity_id = hex_to_entity[&hex];
+    //     let neighbour_hexes = hex.ring(1);
+    //     let neighbour_ids = neighbour_hexes
+    //         .into_iter()
+    //         .filter_map(|neighbour_hex| hex_to_entity.get(&neighbour_hex))
+    //         .cloned()
+    //         .collect::<Vec<Entity>>();
 
-        commands
-            .entity(entity_id)
-            .insert(Neighbours { ids: neighbour_ids });
-    }
+    //     commands
+    //         .entity(entity_id)
+    //         .insert(Neighbours { ids: neighbour_ids });
+    // }
 
-    // TODO: hex_to_entity isn't currently used
-    commands.insert_resource(HexToEntity(hex_to_entity.clone()));
+    // // TODO: hex_to_entity isn't currently used
+    // commands.insert_resource(HexToEntity(hex_to_entity.clone()));
 
     // World Attributes
     commands.insert_resource(world.elevation); // ElevationAttributes
@@ -245,24 +245,13 @@ fn terrain_callback(
         &ElevationBundle,
         &Humidity,
         &Temperature,
-        &Evaporation,
-        &Precipitation,
-        &Overflow,
         &TileType,
+        &DebugWeatherBundle,
     )>,
     mut selected_tile: ResMut<SelectedTile>,
 ) -> Bubble {
-    for (
-        entity,
-        hex_coordinates,
-        elevation,
-        humidity,
-        temperature,
-        evaporation,
-        precipitation,
-        overflow,
-        tile_type,
-    ) in query.iter()
+    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather) in
+        query.iter()
     {
         if entity == event.target {
             selected_tile.entity = Some(entity);
@@ -270,9 +259,11 @@ fn terrain_callback(
             selected_tile.elevation = Some(*elevation);
             selected_tile.humidity = Some(*humidity);
             selected_tile.temperature = Some(*temperature);
-            selected_tile.evaporation = Some(*evaporation);
-            selected_tile.precipitation = Some(*precipitation);
-            selected_tile.overflow = Some(*overflow);
+            selected_tile.evaporation = Some(weather.evaporation);
+            selected_tile.precipitation = Some(weather.precipitation);
+            selected_tile.humidity_received = Some(weather.humidity_received);
+            selected_tile.humidity_sent = Some(weather.humidity_sent);
+            selected_tile.overflow = Some(weather.overflow);
             selected_tile.tile_type = Some(*tile_type);
             break;
         }
@@ -307,7 +298,7 @@ fn setup_camera(mut commands: Commands) {
 }
 
 //////////////////////////////Music//////////////////////////////
-fn play_tunes(asset_server: Res<AssetServer>, audio: Res<Audio>) {
+fn play_tunes(_asset_server: Res<AssetServer>, _audio: Res<Audio>) {
     // let music = asset_server.load("music/ganymede_orbiter.wav");
     // audio.play(music);
 }

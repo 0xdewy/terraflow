@@ -2,8 +2,36 @@ use bevy::prelude::*;
 use hexx::Hex;
 use std::fmt;
 
-use crate::tiles::TileType;
+use crate::terrain::TileType;
 use crate::Epochs;
+
+///////////////////////////////// Intermediary Components /////////////////////////////////////////
+#[derive(Debug, Clone, Copy, Component)]
+pub struct HumidityReceived {
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct HumiditySent {
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct Overflow {
+    pub water: f32,
+    pub soil: f32,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct Precipitation {
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Copy, Component)]
+pub struct Evaporation {
+    pub value: f32,
+}
+
 ///////////////////////////////// Components /////////////////////////////////////////
 ///
 // Dynamically assigned to entities that have had their tiles changed
@@ -65,11 +93,10 @@ pub struct SoilElevation {
 impl From<TileType> for SoilElevation {
     fn from(tile_type: TileType) -> SoilElevation {
         match tile_type {
-            TileType::Grass
-            | TileType::Hills
-            | TileType::Forest
-            | TileType::Jungle
-            | TileType::Swamp => SoilElevation { value: 1.0 },
+            TileType::Grass | TileType::Forest | TileType::Jungle | TileType::Swamp => {
+                SoilElevation { value: 1.0 }
+            }
+            TileType::Hills => SoilElevation { value: 0.2 },
             TileType::Desert | TileType::Waste => SoilElevation { value: 0.3 },
             TileType::Rocky | TileType::Dirt => SoilElevation { value: 0.1 },
             TileType::Ocean | TileType::Water => SoilElevation { value: 0.0 },
@@ -98,9 +125,9 @@ impl From<TileType> for WaterElevation {
             | TileType::Grass
             | TileType::Hills
             | TileType::Forest
-            | TileType::Jungle => 0.7.into(),
+            | TileType::Jungle => 0.8.into(),
             TileType::Dirt | TileType::Rocky => 0.5.into(),
-            TileType::Mountain | TileType::Desert | TileType::Waste => 0.2.into(),
+            TileType::Mountain | TileType::Desert | TileType::Waste => 0.4.into(),
         }
     }
 }
@@ -121,26 +148,10 @@ impl From<TileType> for Humidity {
         match tile_type {
             TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0.into(),
             TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7.into(),
-            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5.into(),
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.3.into(),
             TileType::Waste => 0.2.into(),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Component)]
-pub struct Overflow {
-    pub water: f32,
-    pub soil: f32,
-}
-
-#[derive(Debug, Clone, Copy, Component)]
-pub struct Precipitation {
-    pub value: f32,
-}
-
-#[derive(Debug, Clone, Copy, Component)]
-pub struct Evaporation {
-    pub value: f32,
 }
 
 #[derive(Debug, Clone, Copy, Component)]

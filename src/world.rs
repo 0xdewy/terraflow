@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::tiles::TileType;
+use crate::terrain::TileType;
 use crate::utils::RandomSelection;
 
 #[derive(Debug, serde::Deserialize)]
@@ -29,14 +29,14 @@ impl WorldAttributes {
 #[derive(Debug, serde::Deserialize, Resource)]
 pub struct ErosionAttributes {
     pub erosion_factor: f32,
-    pub erosion_scale: f32,
+    pub overflow_factor: f32
 }
 
 impl From<&Config> for ErosionAttributes {
     fn from(config: &Config) -> Self {
         Self {
             erosion_factor: config.erosion_factor,
-            erosion_scale: config.erosion_scale,
+            overflow_factor: config.overflow_factor,
         }
     }
 }
@@ -122,7 +122,6 @@ pub struct Config {
     hex_size: f32,
     map_radius: u16,
     erosion_factor: f32,
-    erosion_scale: f32,
     precipitation_factor: f32,
     evaporation_factor: f32,
     highest_elevation: f32,
@@ -137,6 +136,7 @@ pub struct Config {
     base_temperature: f32,
     latitude_temperature_variation: f32,
     altitude_temperature_variation: f32,
+    overflow_factor: f32,
 }
 
 ///////////////////////////////////////// TileGeneration ////////////////////////////////////////////////

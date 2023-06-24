@@ -6,7 +6,23 @@ use bevy_egui::{
 };
 use egui::Color32;
 
-use crate::SelectedTile;
+use crate::components::{ElevationBundle, Evaporation, Humidity, HumidityReceived, HumiditySent, Overflow, Precipitation, HexCoordinates, Temperature};
+use crate::terrain::TileType;
+
+#[derive(Debug, Clone, Default, Resource)]
+pub struct SelectedTile {
+    pub entity: Option<Entity>,
+    pub hex_coordinates: Option<HexCoordinates>,
+    pub elevation: Option<ElevationBundle>,
+    pub humidity: Option<Humidity>,
+    pub temperature: Option<Temperature>,
+    pub evaporation: Option<Evaporation>,
+    pub precipitation: Option<Precipitation>,
+    pub overflow: Option<Overflow>,
+    pub tile_type: Option<TileType>,
+    pub humidity_received: Option<HumidityReceived>,
+    pub humidity_sent: Option<HumiditySent>,
+}
 
 pub fn terrain_details(mut egui_contexts: EguiContexts, selected_tile: Res<SelectedTile>) {
     egui::Window::new("Terrain Details").show(egui_contexts.ctx_mut(), |ui| {
@@ -75,6 +91,18 @@ pub fn terrain_details(mut egui_contexts: EguiContexts, selected_tile: Res<Selec
                         ui.horizontal(|ui| {
                             ui.label("Overflow:");
                             ui.label(format!("{}", overflow));
+                        });
+                    }
+                    if let Some(humidity_received) = &selected_tile.humidity_received {
+                        ui.horizontal(|ui| {
+                            ui.label("Humidity Received:");
+                            ui.label(format!("{}", humidity_received.value));
+                        });
+                    }
+                    if let Some(humidity_sent) = &selected_tile.humidity_sent {
+                        ui.horizontal(|ui| {
+                            ui.label("Humidity Sent:");
+                            ui.label(format!("{}", humidity_sent.value));
                         });
                     }
                 });
