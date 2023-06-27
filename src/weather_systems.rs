@@ -372,7 +372,6 @@ pub fn redistribute_overflow_system(
 
         let lowest_neighbour = crate::utils::get_lowest_neighbour(lower_neighbours);
         assert!(lowest_neighbour != entity);
-        println!("lowest_neighbour: {:?}", lowest_neighbour);
 
         incoming_overflow_query
             .get_mut(lowest_neighbour)
@@ -380,10 +379,6 @@ pub fn redistribute_overflow_system(
             .map(|mut incoming_overflow| {
                 incoming_overflow.water += water_overflow;
                 incoming_overflow.soil += soil_overflow;
-                println!(
-                    "neighbour: {:?}, is receiving overflow: {:?} from: {:?}",
-                    lowest_neighbour, water_overflow, entity
-                );
             });
 
         // TODO: does soil need to be reduced also? this should probably be split amongs bedrock and soil
