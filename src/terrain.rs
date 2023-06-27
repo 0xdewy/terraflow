@@ -30,48 +30,6 @@ pub enum TileType {
     Waste,
 }
 
-impl TileType {
-    // how much precipitation adds to groundwater
-    pub fn handle_precipitation(&self, precipitation: f32) -> f32 {
-        match self {
-            TileType::Ocean => 0.0,
-            _ => precipitation,
-        }
-    }
-
-    // how much evaporation takes away from ground_water
-    pub fn handle_evaporation(&self, evaporation: f32) -> f32 {
-        match self {
-            TileType::Ocean => 0.0,
-            _ => evaporation,
-        }
-    }
-
-    pub fn handle_ground_water(&self, water_received: f32) -> f32 {
-        match self {
-            TileType::Ocean => 0.0,
-            _ => water_received,
-        }
-    }
-
-    pub fn handle_soil(&self, soil_received: f32) -> f32 {
-        match self {
-            TileType::Ocean => 0.0,
-            _ => soil_received,
-        }
-    }
-
-    // // 1.0 = everything escapes, 0.0 = nothing escapes
-    pub fn precipitation_factor(&self, precipitation_factor: f32) -> f32 {
-        match self {
-            TileType::Hills | TileType::Rocky => 0.3,
-            TileType::Mountain => 0.9,
-            TileType::Ocean => 0.1,
-            _ => precipitation_factor,
-        }
-    }
-}
-
 // TODO: add to config file
 const HIGH_HUMIDITY: f32 = 0.8;
 const LOW_HUMIDITY: f32 = 0.2;
@@ -86,6 +44,7 @@ pub trait WeatherEffects: Sized {
     fn below_limit(&self, tile_type: &TileType) -> bool;
 }
 
+// Humidity
 impl WeatherEffects for Humidity {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
         let mut probabilities = vec![];
@@ -95,8 +54,9 @@ impl WeatherEffects for Humidity {
                 TileType::Waste => vec![(TileType::Swamp, LOW_ODDS)],
                 TileType::Grass => vec![(TileType::Forest, MED_ODDS)],
                 TileType::Forest => vec![(TileType::Jungle, MED_ODDS)],
-                TileType::Desert => vec![(TileType::Grass, MED_ODDS)],
+                TileType::Desert => vec![(TileType::Grass, LOW_ODDS), (TileType::Dirt, MED_ODDS)],
                 TileType::Rocky => vec![(TileType::Hills, LOW_ODDS)],
+                TileType::Dirt => vec![(TileType::Grass, MED_ODDS)],
                 _ => vec![(*tile_type, CERTAIN)],
             });
         }
@@ -128,7 +88,7 @@ impl WeatherEffects for Humidity {
                 self.value > LOW_HUMIDITY
             }
             TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => {
-                self.value < LOW_HUMIDITY
+                self.value > LOW_HUMIDITY
             }
         }
     }
@@ -157,10 +117,13 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
                 TileType::Grass => {
                     return vec![(TileType::Forest, LOW_ODDS), (TileType::Water, MED_ODDS)]
                 }
-                TileType::Forest => return vec![(TileType::Jungle, LOW_ODDS), (TileType::Water, MED_ODDS)],
+                TileType::Forest => {
+                    return vec![(TileType::Jungle, LOW_ODDS), (TileType::Water, MED_ODDS)]
+                }
                 TileType::Jungle => return vec![(TileType::Swamp, LOW_ODDS)],
                 TileType::Swamp => return vec![(TileType::Water, HIGH_ODDS)],
                 TileType::Hills => return vec![(TileType::Water, MED_ODDS)],
+                TileType::Desert => return vec![(TileType::Grass, HIGH_ODDS)],
                 _ => return vec![(*tile_type, CERTAIN)],
             }
         } else if self.below_limit(tile_type) {
@@ -168,7 +131,9 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
                 TileType::Swamp => {
                     return vec![(TileType::Dirt, LOW_ODDS), (TileType::Grass, MED_ODDS)]
                 }
-                TileType::Water => return vec![(TileType::Swamp, MED_ODDS)],
+                TileType::Water => {
+                    return vec![(TileType::Swamp, HIGH_ODDS), (TileType::Forest, MED_ODDS)]
+                }
                 _ => return vec![(*tile_type, CERTAIN)],
             }
         }
@@ -191,7 +156,7 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
 
     fn below_limit(&self, tile_type: &TileType) -> bool {
         match tile_type {
-            TileType::Water => self.0.value < self.1.value - self.2,
+            TileType::Water => self.0.value < self.1.value,
             TileType::Ocean => false,
             TileType::Mountain => false,
             TileType::Ice => false,
@@ -246,7 +211,7 @@ impl WeatherEffects for (&BedrockElevation, &ElevationAttributes) {
             TileType::Rocky | TileType::Hills => {
                 self.0.value / self.1.highest_elevation < self.1.hill_point
             }
-            _ => self.0.value < self.1.sea_level,
+            _ => false,
         }
     }
 }

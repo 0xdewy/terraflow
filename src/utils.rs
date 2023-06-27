@@ -1,4 +1,5 @@
 use crate::components::LowerNeighbours;
+use bevy::ecs::entity::Entity;
 
 use super::terrain::TileType;
 
@@ -44,11 +45,10 @@ impl RandomSelection<TileType> for Vec<(TileType, f32)> {
     }
 }
 
-pub fn get_lowest_neighbour(lower_neighbours: &LowerNeighbours) -> u32 {
-
+pub fn get_lowest_neighbour(lower_neighbours: &LowerNeighbours) -> Entity {
     let mut lowest_neighbours = Vec::new();
     let mut lowest_height = f32::MAX;
-    
+
     for (id, neighbour_height) in &lower_neighbours.ids {
         if *neighbour_height < lowest_height {
             lowest_height = *neighbour_height;
@@ -58,13 +58,12 @@ pub fn get_lowest_neighbour(lower_neighbours: &LowerNeighbours) -> u32 {
             lowest_neighbours.push(*id);
         }
     }
-    
+
     let receiver_index = if !lowest_neighbours.is_empty() {
-        lowest_neighbours.choose(&mut rand::thread_rng()).unwrap().index()
+        lowest_neighbours.choose(&mut rand::thread_rng()).unwrap()
     } else {
         panic!("No lower neighbours found!");
     };
 
-    receiver_index
+    *receiver_index
 }
-

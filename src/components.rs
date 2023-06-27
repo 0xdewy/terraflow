@@ -6,28 +6,46 @@ use crate::terrain::TileType;
 use crate::Epochs;
 
 ///////////////////////////////// Intermediary Components /////////////////////////////////////////
+///
+/// This component is for display last epoch weather data
 #[derive(Debug, Clone, Copy, Component)]
+pub struct DebugWeatherBundle {
+    pub overflow: Overflow,
+    pub overflow_received: OverflowReceived,
+    pub humidity_received: HumidityReceived,
+    pub humidity_sent: HumiditySent,
+    pub evaporation: Evaporation,
+    pub precipitation: Precipitation,
+}
+
+#[derive(Debug, Clone, Copy, Default, Component)]
 pub struct HumidityReceived {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Copy, Component)]
+#[derive(Debug, Clone, Copy, Default, Component)]
 pub struct HumiditySent {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Copy, Component)]
+#[derive(Debug, Clone, Copy, Default, Component)]
+pub struct OverflowReceived {
+    pub water: f32,
+    pub soil: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Component)]
 pub struct Overflow {
     pub water: f32,
     pub soil: f32,
 }
 
-#[derive(Debug, Clone, Copy, Component)]
+#[derive(Debug, Clone, Copy, Default, Component)]
 pub struct Precipitation {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, Copy, Component)]
+#[derive(Debug, Clone, Copy, Default, Component)]
 pub struct Evaporation {
     pub value: f32,
 }
@@ -39,6 +57,13 @@ pub struct Evaporation {
 pub struct TileTypeChanged;
 
 //////////////////////////////////// Dynamic Components /////////////////////////////////////////
+
+#[derive(Debug, Clone, Component, Default)]
+pub struct OutgoingOverflow {
+    pub water: f32,
+    pub soil: f32,
+}
+
 #[derive(Debug, Clone, Component, Default)]
 pub struct IncomingOverflow {
     pub water: f32,
@@ -47,7 +72,7 @@ pub struct IncomingOverflow {
 
 #[derive(Debug, Clone, Component)]
 pub struct PendingHumidityRedistribution {
-    pub amount: f32,
+    pub value: f32,
 }
 
 #[derive(Debug, Clone, Component)]
@@ -94,7 +119,7 @@ impl From<TileType> for SoilElevation {
     fn from(tile_type: TileType) -> SoilElevation {
         match tile_type {
             TileType::Grass | TileType::Forest | TileType::Jungle | TileType::Swamp => {
-                SoilElevation { value: 1.0 }
+                SoilElevation { value: 0.5 }
             }
             TileType::Hills => SoilElevation { value: 0.2 },
             TileType::Desert | TileType::Waste => SoilElevation { value: 0.3 },
@@ -148,7 +173,7 @@ impl From<TileType> for Humidity {
         match tile_type {
             TileType::Ocean | TileType::Water | TileType::Swamp | TileType::Jungle => 1.0.into(),
             TileType::Ice | TileType::Grass | TileType::Hills | TileType::Forest => 0.7.into(),
-            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.3.into(),
+            TileType::Dirt | TileType::Rocky | TileType::Mountain | TileType::Desert => 0.5.into(),
             TileType::Waste => 0.2.into(),
         }
     }
@@ -176,8 +201,8 @@ pub struct LowerNeighbours {
 
 impl fmt::Display for Epochs {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Epochs: {}", self.epochs)?;
-        writeln!(f, "Function Order: {:?}", self.fn_order)
+        write!(f, "Epochs: {} \n", self.epochs)?;
+        write!(f, "Epochs left: {:?}", self.epochs_to_run)
     }
 }
 
@@ -220,6 +245,12 @@ impl fmt::Display for Humidity {
 }
 
 impl fmt::Display for Overflow {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "water: {} soil: {}", self.water, self.soil)
+    }
+}
+
+impl fmt::Display for OverflowReceived {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "water: {} soil: {}", self.water, self.soil)
     }

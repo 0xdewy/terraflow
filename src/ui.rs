@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_mod_picking::prelude::*;
 
 use bevy_egui::{
     egui::{self, ScrollArea},
@@ -6,8 +7,46 @@ use bevy_egui::{
 };
 use egui::Color32;
 
-use crate::components::{ElevationBundle, Evaporation, Humidity, HumidityReceived, HumiditySent, Overflow, Precipitation, HexCoordinates, Temperature};
+use crate::components::{
+    DebugWeatherBundle, ElevationBundle, Evaporation, HexCoordinates, Humidity, HumidityReceived,
+    HumiditySent, Overflow, OverflowReceived, Precipitation, Temperature,
+};
 use crate::terrain::TileType;
+
+pub fn terrain_callback(
+    In(event): In<ListenedEvent<Click>>,
+    query: Query<(
+        Entity,
+        &HexCoordinates,
+        &ElevationBundle,
+        &Humidity,
+        &Temperature,
+        &TileType,
+        &DebugWeatherBundle,
+    )>,
+    mut selected_tile: ResMut<SelectedTile>,
+) -> Bubble {
+    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather) in
+        query.iter()
+    {
+        if entity == event.target {
+            selected_tile.entity = Some(entity);
+            selected_tile.hex_coordinates = Some(hex_coordinates.clone());
+            selected_tile.elevation = Some(*elevation);
+            selected_tile.humidity = Some(*humidity);
+            selected_tile.temperature = Some(*temperature);
+            selected_tile.evaporation = Some(weather.evaporation);
+            selected_tile.precipitation = Some(weather.precipitation);
+            selected_tile.humidity_received = Some(weather.humidity_received);
+            selected_tile.humidity_sent = Some(weather.humidity_sent);
+            selected_tile.overflow = Some(weather.overflow);
+            selected_tile.overflow_received = Some(weather.overflow_received);
+            selected_tile.tile_type = Some(*tile_type);
+            break;
+        }
+    }
+    Bubble::Up
+}
 
 #[derive(Debug, Clone, Default, Resource)]
 pub struct SelectedTile {
@@ -19,6 +58,7 @@ pub struct SelectedTile {
     pub evaporation: Option<Evaporation>,
     pub precipitation: Option<Precipitation>,
     pub overflow: Option<Overflow>,
+    pub overflow_received: Option<OverflowReceived>,
     pub tile_type: Option<TileType>,
     pub humidity_received: Option<HumidityReceived>,
     pub humidity_sent: Option<HumiditySent>,
@@ -89,8 +129,14 @@ pub fn terrain_details(mut egui_contexts: EguiContexts, selected_tile: Res<Selec
                     }
                     if let Some(overflow) = &selected_tile.overflow {
                         ui.horizontal(|ui| {
-                            ui.label("Overflow:");
+                            ui.label("Overflow Sent:");
                             ui.label(format!("{}", overflow));
+                        });
+                    }
+                    if let Some(overflow_received) = &selected_tile.overflow_received {
+                        ui.horizontal(|ui| {
+                            ui.label("Overflow Received:");
+                            ui.label(format!("{}", overflow_received));
                         });
                     }
                     if let Some(humidity_received) = &selected_tile.humidity_received {

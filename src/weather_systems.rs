@@ -1,10 +1,13 @@
+use core::panic;
+
 use bevy::prelude::*;
 
+use bevy::transform::commands;
 use bevy_mod_picking::prelude::*;
 
 use crate::components::{
     ElevationBundle, HexCoordinates, HigherNeighbours, Humidity, IncomingOverflow, LowerNeighbours,
-    Neighbours, PendingHumidityRedistribution, Temperature, TileTypeChanged,
+    Neighbours, OutgoingOverflow, PendingHumidityRedistribution, Temperature, TileTypeChanged,
 };
 use crate::terrain::{TileAssets, TileType, WeatherEffects};
 use crate::utils::RandomSelection;
@@ -15,7 +18,7 @@ use crate::world::{
 use crate::{pointy_layout, DebugWeatherBundle, Epochs, GameStates};
 
 // TODO: move this to a config file
-pub const SIGMOID_STEEPNESS: f32 = 2.0;
+pub const SIGMOID_STEEPNESS: f32 = 1.0;
 
 // TODO: move to utils file
 pub fn sigmoid(x: f32) -> f32 {
@@ -70,7 +73,7 @@ pub fn update_terrain_assets(
     )>,
     tile_assets: Res<TileAssets>,
     mut next_state: ResMut<NextState<GameStates>>,
-    _elevation_attributes: Res<ElevationAttributes>,
+    elevation_attributes: Res<ElevationAttributes>,
     map_attributes: Res<MapAttributes>,
 ) {
     debug.fn_order.push("update_terrain_assets".to_string());
@@ -78,7 +81,7 @@ pub fn update_terrain_assets(
         entity,
         tile_type,
         hex,
-        _altitude,
+        altitude,
         mut transform,
         mut mesh_handle,
         mut material_handle,
@@ -87,9 +90,9 @@ pub fn update_terrain_assets(
     {
         let world_pos = pointy_layout(map_attributes.hex_size).hex_to_world_pos(hex.0);
 
-        // let total_height = altitude.bedrock.value
-        //     + ((altitude.soil.value + altitude.water.value)
-        //         * elevation_attributes.soil_and_water_height_display_factor);
+        let total_height = altitude.bedrock.value
+            + ((altitude.soil.value + altitude.water.value)
+                * elevation_attributes.soil_and_water_height_display_factor);
 
         let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
 
@@ -98,8 +101,8 @@ pub fn update_terrain_assets(
         commands.entity(entity).remove::<RaycastPickTarget>();
 
         // update entity with new mesh, material and transform
-        *transform =
-            Transform::from_xyz(world_pos.x, 0.0, world_pos.y).with_scale(Vec3::splat(2.0));
+        *transform = Transform::from_xyz(world_pos.x, total_height, world_pos.y)
+            .with_scale(Vec3::splat(2.0));
         *mesh_handle = new_mesh_handle;
         *material_handle = new_material_handle;
 
@@ -111,7 +114,7 @@ pub fn update_terrain_assets(
     }
 
     // Finish epoch
-    next_state.set(GameStates::Loading);
+    next_state.set(GameStates::Waiting);
 }
 
 /////////////////////////////////Weather Systems//////////////////////////////////////////////////
@@ -135,21 +138,27 @@ pub fn evaporation_system(
             .max(0.0)
             .min(1.0);
 
+        // Ocean tiles are set to produce more evaporation to supply the planet with humidity
+        let tile_factor = match tile_type {
+            TileType::Ocean => 4.0,
+            _ => 1.0,
+        };
+
         // Calculate evaporation
-        let factor = sigmoid(SIGMOID_STEEPNESS * (elevation.water.value - 1.0));
         weather.evaporation.value = (normalized_temperature
             * elevation.water.value
-            * factor
-            * ecosystem.evaporation_factor)
+            * ecosystem.evaporation_factor
+            * tile_factor)
             .max(0.0);
 
-        // Verify evaporation is non-negative
         assert!(weather.evaporation.value >= 0.0);
-        // Update humidity and water level
         humidity.value += weather.evaporation.value;
-        elevation.water.value = (elevation.water.value
-            - tile_type.handle_evaporation(weather.evaporation.value))
-        .max(0.0);
+
+        let water_lost_to_evaporation = match tile_type {
+            TileType::Ocean => 0.0,
+            _ => weather.evaporation.value,
+        };
+        elevation.water.value = elevation.water.value - water_lost_to_evaporation.max(0.0);
     }
 }
 
@@ -165,69 +174,74 @@ pub fn precipitation_system(
 ) {
     debug.fn_order.push("precipitation_system".to_string());
     for (humidity, mut weather, tile_type, mut water_level) in query.iter_mut() {
-        weather.precipitation.value = 0.0;
+        let tile_factor = match tile_type {
+            TileType::Mountain => 0.9,
+            TileType::Hills | TileType::Rocky => 0.3,
+            TileType::Jungle | TileType::Swamp => 0.2,
+            TileType::Ocean => 0.1,
+            _ => 0.1,
+        };
 
         let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
-        let precipitation_increment = factor
-            * humidity.value
-            * tile_type.precipitation_factor(ecosystem_terrain.precipitation_factor);
-        // println!(
-        //     "precipitation: {}, humidity: {}",
-        //     precipitation_increment, humidity.value
-        // );
+        let precipitation_increment =
+            factor * humidity.value * tile_factor * ecosystem_terrain.precipitation_factor;
 
         weather.precipitation.value = precipitation_increment;
 
-        water_level.water.value += tile_type.handle_precipitation(precipitation_increment);
+        // water_level.water.value += tile_type.handle_precipitation(precipitation_increment);
+        water_level.water.value += match tile_type {
+            TileType::Ocean => 0.0,
+            _ => precipitation_increment,
+        }
     }
 
     assert!(query.iter().len() > 0);
 }
 
 ///////////////////////////////// Terrain Analysis systems /////////////////////////////////////////
-///
 
 pub fn calculate_neighbour_heights_system(
+    mut commands: Commands,
     mut debug: ResMut<Epochs>,
-    mut query: Query<(
-        Entity,
-        &ElevationBundle,
-        &Neighbours,
-        &mut LowerNeighbours,
-        &mut HigherNeighbours,
-    )>,
+    mut query: Query<(Entity, &ElevationBundle, &Neighbours)>,
     neighbour_query: Query<&ElevationBundle>,
     mut next_game_state: ResMut<NextState<GameStates>>,
 ) {
     debug
         .fn_order
         .push("calculate_neighbour_heights_system".to_string());
-    for (_entity, elevation, neighbours, mut lower_neighbours, mut higher_neighbours) in
-        query.iter_mut()
-    {
+
+    for (entity, elevation, neighbours) in query.iter_mut() {
         let this_entity_height =
             elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
         // Reset the lists of lower and higher neighbours
-        lower_neighbours.ids.clear();
-        higher_neighbours.ids.clear();
+        let mut lower_neighbours = LowerNeighbours { ids: Vec::new() };
+        let mut higher_neighbours = HigherNeighbours { ids: Vec::new() };
 
         for neighbour_id in &neighbours.ids {
             if let Ok(neighbour_elevation) = neighbour_query.get(*neighbour_id) {
                 let neighbour_height = neighbour_elevation.bedrock.value
-                    + elevation.water.value
-                    + neighbour_elevation.soil.value;
+                    + neighbour_elevation.soil.value
+                    + neighbour_elevation.water.value;
 
-                // Add the neighbour to the appropriate list
+                // Include equal level into higher_neighbours
                 if neighbour_height < this_entity_height {
                     lower_neighbours.ids.push((*neighbour_id, neighbour_height));
-                } else if neighbour_height >= this_entity_height {
-                    // Include equal level into higher_neighbours
+                } else {
                     higher_neighbours
                         .ids
                         .push((*neighbour_id, neighbour_height));
                 }
             }
+        }
+
+        if higher_neighbours.ids.len() > 0 {
+            commands.entity(entity).insert(higher_neighbours);
+        }
+
+        if lower_neighbours.ids.len() > 0 {
+            commands.entity(entity).insert(lower_neighbours);
         }
     }
 
@@ -248,43 +262,40 @@ pub fn redistribute_humidity_system(
         &HigherNeighbours,
     )>,
     mut incoming_humidity_query: Query<&mut PendingHumidityRedistribution>,
+    ecosystem: Res<EcosystemAttributes>,
 ) {
     debug
         .fn_order
         .push("redistribute_humidity_system".to_string());
-    for (_entity, mut humidity, mut weather, _tile_type, higher_neighbours) in query.iter_mut() {
-        let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
 
-        let humidity_to_escape = humidity.value * factor;
-
-        if humidity_to_escape <= 0.0 {
-            continue;
-        }
-
+    for (_entity, mut humidity, mut weather, tile_type, higher_neighbours) in query.iter_mut() {
         let num_higher_neighbours = higher_neighbours.ids.len() as f32;
+        let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
+        let humidity_to_escape = humidity.value * factor * ecosystem.humidity_escape_factor;
+        assert!(humidity_to_escape >= 0.0);
 
         for &(neighbour_id, _neighbour_height) in &higher_neighbours.ids {
             let proportion = 1.0 / num_higher_neighbours;
             let humidity_for_neighbour = humidity_to_escape * proportion;
 
-            if humidity_for_neighbour > 0.0 {
-                // Check if the neighbour already has a PendingHumidityRedistribution
-                if let Ok(mut incoming_humidity) = incoming_humidity_query.get_mut(neighbour_id) {
-                    incoming_humidity.amount += humidity_for_neighbour;
-                } else {
-                    // If not, add a PendingHumidityRedistribution component to the neighbour
-                    commands
-                        .entity(neighbour_id)
-                        .insert(PendingHumidityRedistribution {
-                            amount: humidity_for_neighbour,
-                        });
-                }
+            if humidity_for_neighbour < 0.0 {
+                continue;
             }
+
+            incoming_humidity_query
+                .get_mut(neighbour_id)
+                .ok()
+                .map(|mut incoming_humidity| {
+                    incoming_humidity.value += humidity_for_neighbour;
+                });
         }
         humidity.value = (humidity.value - humidity_to_escape).max(0.0);
         weather.humidity_sent.value = humidity_to_escape;
         weather.humidity_received.value = 0.0;
     }
+    debug
+        .fn_order
+        .push("finished redistribute_humidity_system".to_string());
 }
 
 pub fn apply_humidity_redistribution(
@@ -294,72 +305,35 @@ pub fn apply_humidity_redistribution(
         Entity,
         &mut Humidity,
         &mut DebugWeatherBundle,
-        &PendingHumidityRedistribution,
+        &mut PendingHumidityRedistribution,
     )>,
     mut next_state: ResMut<NextState<GameStates>>,
 ) {
     debug
         .fn_order
         .push("apply_humidity_redistribution".to_string());
-    for (entity, mut humidity, mut weather, redistribution) in query.iter_mut() {
-        // println!(
-        //     "entity: {:?}, humidity {}, redistribution: {:?}",
-        //     entity, humidity.value, redistribution.amount
-        // );
-        humidity.value += redistribution.amount;
+    for (entity, mut humidity, mut weather, mut redistribution) in query.iter_mut() {
+        humidity.value += redistribution.value;
 
-        weather.humidity_received.value += redistribution.amount;
-        // Remove the PendingHumidityRedistribution component
-        commands
-            .entity(entity)
-            .remove::<PendingHumidityRedistribution>();
+        weather.humidity_received.value = redistribution.value;
+        redistribution.value = 0.0;
     }
 
     next_state.set(GameStates::EpochFinish);
-}
-
-///////////////////////////////// Overflow systems /////////////////////////////////////////
-///
-// TODO: these can be inlined into the redistribute overflow system
-// Overflow should only be used for debug purposes
-pub fn calculate_overflow_system(
-    mut debug: ResMut<Epochs>,
-    mut query: Query<(Entity, &ElevationBundle, &mut DebugWeatherBundle, &TileType)>,
-    erosion_attributes: Res<ErosionAttributes>,
-) {
-    debug.fn_order.push("calculate_overflow_system".to_string());
-    for (_entity, elevation, mut weather, tiletype) in query.iter_mut() {
-        // Nothing is lower than oceans so they don't overflow
-        // TODO: use sigmoid function so that more overflows when water is greater
-        weather.overflow.water = match tiletype {
-            TileType::Ocean => 0.0,
-            _ => (elevation.water.value - elevation.soil.value).max(0.0) * erosion_attributes.overflow_factor,
-        };
-
-        // Ocean tiles don't erode
-        weather.overflow.soil = match tiletype {
-            TileType::Ocean => 0.0,
-            _ => (weather.overflow.water
-                * elevation.bedrock.value
-                * erosion_attributes.erosion_factor)
-                .max(0.0),
-        }
-        // println!(
-        //     "water level {} overflow.value: {}, tiletype: {:?}",
-        //     elevation.water.value, overflow.value, tiletype
-        // );
-    }
+    debug
+        .fn_order
+        .push("finished apply_humidity_redistribution".to_string());
 }
 
 // takes in the overflow and creates a component for each lower neighbour, containing their share of the overflow
 pub fn redistribute_overflow_system(
     mut debug: ResMut<Epochs>,
-    mut commands: Commands,
     mut query: Query<(
         Entity,
-        &mut DebugWeatherBundle,
         &mut ElevationBundle,
         &LowerNeighbours,
+        &TileType,
+        &mut DebugWeatherBundle,
     )>,
     mut incoming_overflow_query: Query<&mut IncomingOverflow>,
     erosion_attributes: Res<ErosionAttributes>,
@@ -367,81 +341,96 @@ pub fn redistribute_overflow_system(
     debug
         .fn_order
         .push("redistribute_overflow_system".to_string());
-    for (_entity, weather, mut elevation, lower_neighbours) in query.iter_mut() {
-        let this_entity_height =
-            elevation.bedrock.value + elevation.water.value + elevation.soil.value;
 
-        // Get the total altitude difference with lower neighbours
-        let total_difference: f32 = lower_neighbours
-            .ids
-            .iter()
-            .map(|(_, neighbour_height)| (this_entity_height - neighbour_height).max(0.0))
-            .sum();
+    // Create a component for each lower neighbour, containing their share of the overflow
+    for (entity, mut elevation, lower_neighbours, tiletype, mut weather) in query.iter_mut() {
+        // if there is an altitude difference, but no lower neighbours, something is wrong
+        assert!(lower_neighbours.ids.len() > 0);
 
-        // If there are no lower neighbours, add the overflow to the water level
-        if total_difference == 0.0 {
+        let overflow_factor = sigmoid(SIGMOID_STEEPNESS * (elevation.water.value - 1.0));
+        // Nothing is lower than oceans so they don't overflow
+        let water_overflow = match tiletype {
+            TileType::Ocean => 0.0,
+            _ => {
+                (elevation.water.value - elevation.soil.value).max(0.0)
+                    * erosion_attributes.overflow_factor
+                    * overflow_factor
+            }
+        };
+
+        if water_overflow <= 0.0 {
             continue;
         }
 
-        let num_lower_neighbours = lower_neighbours.ids.len() as f32;
-        // if there is an altitude difference, but no lower neighbours, something is wrong
-        assert!(num_lower_neighbours > 0.0);
+        // erosion is influenced by soil,water, + general erosion factor
+        let normalized_overflow = weather.overflow.water / 1.0;
+        let normalized_soil = elevation.soil.value / 1.0;
+        let erosion_factor =
+            (normalized_soil * normalized_overflow * erosion_attributes.erosion_factor).min(1.0);
+        // this reduces the bedrock level so it needs to be 0-1 normalized to the current bedrock level
+        let soil_overflow = erosion_factor * elevation.bedrock.value;
 
-        let lowest_neighbour_index = crate::utils::get_lowest_neighbour(lower_neighbours);
+        let lowest_neighbour = crate::utils::get_lowest_neighbour(lower_neighbours);
+        assert!(lowest_neighbour != entity);
+        println!("lowest_neighbour: {:?}", lowest_neighbour);
 
-        // Calculate the overflow for each neighbour
-        for &(neighbour_id, neighbour_height) in &lower_neighbours.ids {
-            let difference = (this_entity_height - neighbour_height).max(0.0);
-            let proportion = difference / total_difference;
-            let mut water_overflow_for_neighbour = weather.overflow.water * proportion;
-            let soil_overflow_for_neighbour = water_overflow_for_neighbour
-                * elevation.soil.value
-                * erosion_attributes.erosion_factor;
+        incoming_overflow_query
+            .get_mut(lowest_neighbour)
+            .ok()
+            .map(|mut incoming_overflow| {
+                incoming_overflow.water += water_overflow;
+                incoming_overflow.soil += soil_overflow;
+                println!(
+                    "neighbour: {:?}, is receiving overflow: {:?} from: {:?}",
+                    lowest_neighbour, water_overflow, entity
+                );
+            });
 
-            // TODO: temporary fix to spread soil across all neighbours, but not water
-            if neighbour_id.index() != lowest_neighbour_index {
-                water_overflow_for_neighbour = 0.0;
-            } else {
-                water_overflow_for_neighbour = weather.overflow.water;
-            }
+        // TODO: does soil need to be reduced also? this should probably be split amongs bedrock and soil
+        // assert!(overflow.soil <= elevation.soil.value);
+        // elevation.soil.value = (elevation.soil.value - overflow.soil).max(0.0);
+        assert!(elevation.bedrock.value >= soil_overflow);
+        elevation.bedrock.value = (elevation.bedrock.value - soil_overflow).max(0.0);
+        elevation.water.value = (elevation.water.value - water_overflow).max(0.0);
 
-            if let Ok(mut incoming_overflow) = incoming_overflow_query.get_mut(neighbour_id) {
-                // If there is an existing IncomingOverflow, add to it
-                incoming_overflow.water += water_overflow_for_neighbour;
-                incoming_overflow.soil += soil_overflow_for_neighbour;
-            } else {
-                // If there is not an existing IncomingOverflow, create one
-                commands.entity(neighbour_id).insert(IncomingOverflow {
-                    water: water_overflow_for_neighbour,
-                    soil: soil_overflow_for_neighbour,
-                });
-            }
-        }
-
-        // TODO: assert that soil_lost_to_overflow is not greater than soil
-        assert!(weather.overflow.water <= elevation.water.value);
-        elevation.water.value = (elevation.water.value - weather.overflow.water).max(0.0);
-        assert!(weather.overflow.soil <= elevation.soil.value);
-        elevation.soil.value = (elevation.soil.value - weather.overflow.soil).max(0.0);
-        assert!(elevation.bedrock.value >= weather.overflow.soil);
-        elevation.bedrock.value = (elevation.bedrock.value - weather.overflow.soil).max(0.0);
+        weather.overflow.water = water_overflow;
+        weather.overflow.soil = soil_overflow;
     }
 }
 
 // Groundwater overflow is applied to this neighbours water level
 pub fn apply_water_overflow(
     mut debug: ResMut<Epochs>,
-    mut query: Query<
-        (Entity, &mut ElevationBundle, &IncomingOverflow, &TileType),
-        Added<IncomingOverflow>,
-    >,
-    mut commands: Commands,
+    mut query: Query<(
+        Entity,
+        &mut ElevationBundle,
+        &mut IncomingOverflow,
+        &TileType,
+        &mut DebugWeatherBundle,
+    )>,
 ) {
     debug.fn_order.push("apply_water_overflow".to_string());
 
-    for (entity, mut elevation, incoming_overflow, tile_type) in query.iter_mut() {
-        elevation.water.value += tile_type.handle_ground_water(incoming_overflow.water);
-        elevation.soil.value += tile_type.handle_soil(incoming_overflow.soil);
-        commands.entity(entity).remove::<IncomingOverflow>();
+    for (entity, mut elevation, mut incoming_overflow, tile_type, mut weather) in query.iter_mut() {
+        if incoming_overflow.water == 0.0 {
+            incoming_overflow.soil = 0.0;
+            continue;
+        }
+
+        elevation.water.value += match tile_type {
+            TileType::Ocean => 0.0,
+            _ => incoming_overflow.water,
+        };
+
+        elevation.soil.value += match tile_type {
+            TileType::Ocean => 0.0,
+            _ => incoming_overflow.soil,
+        };
+
+        weather.overflow_received.soil = incoming_overflow.soil;
+        weather.overflow_received.water = incoming_overflow.water;
+
+        incoming_overflow.water = 0.0;
+        incoming_overflow.soil = 0.0;
     }
 }

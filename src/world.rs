@@ -29,7 +29,7 @@ impl WorldAttributes {
 #[derive(Debug, serde::Deserialize, Resource)]
 pub struct ErosionAttributes {
     pub erosion_factor: f32,
-    pub overflow_factor: f32
+    pub overflow_factor: f32,
 }
 
 impl From<&Config> for ErosionAttributes {
@@ -105,6 +105,7 @@ pub struct EcosystemAttributes {
     pub precipitation_factor: f32,
     pub evaporation_factor: f32,
     pub terrain_change_sensitivity: f32,
+    pub humidity_escape_factor: f32,
 }
 
 impl From<&Config> for EcosystemAttributes {
@@ -113,6 +114,7 @@ impl From<&Config> for EcosystemAttributes {
             precipitation_factor: config.precipitation_factor,
             evaporation_factor: config.evaporation_factor,
             terrain_change_sensitivity: config.terrain_change_sensitivity,
+            humidity_escape_factor: config.humidity_escape_factor,
         }
     }
 }
@@ -137,6 +139,7 @@ pub struct Config {
     latitude_temperature_variation: f32,
     altitude_temperature_variation: f32,
     overflow_factor: f32,
+    humidity_escape_factor: f32,
 }
 
 ///////////////////////////////////////// TileGeneration ////////////////////////////////////////////////
