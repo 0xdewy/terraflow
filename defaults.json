@@ -1,21 +1,22 @@
 {
     "hex_size": 2.0,
     "map_radius": 100,
-    "vulcanism": 20,
-    "erosion_factor": 0.01,
-    "precipitation_factor": 0.05,
-    "evaporation_factor": 0.05,
-    "highest_elevation": 7.0,
+    "vulcanism": 50,
+    "erosion_factor": 0.0005,
+    "precipitation_factor": 0.03,
+    "evaporation_factor": 0.03,
+    "highest_elevation": 10.0,
     "mountain_spread": 0.4,
     "elevation_increment": 0.01,
-    "sea_level": 1.0,
-    "terrain_change_sensitivity": 0.8,
+    "epoch_increment": 0.0025,
+    "sea_level": 2.0,
+    "terrain_change_sensitivity": 1.5,
     "mountain_point": 0.8,
     "hill_point": 0.7,
-    "soil_and_water_height_display_factor": 0.25,
+    "soil_and_water_height_display_factor": 1.0,
     "base_temperature": 40.0,
     "latitude_temperature_variation": 35.0,
     "altitude_temperature_variation": 2.5,
-    "overflow_factor": 0.5,
-    "humidity_escape_factor": 0.5
-}
+    "overflow_factor": 0.6,
+    "humidity_escape_factor": 0.7
+} 

@@ -8,6 +8,7 @@ use bevy_egui::EguiPlugin;
 // use hexx::shapes;
 use hexx::*;
 
+use rand::prelude::SliceRandom;
 use std::collections::HashMap;
 
 mod benchmark;
@@ -20,18 +21,21 @@ mod weather_systems;
 mod world;
 
 use components::{
-    BedrockElevation, DebugWeatherBundle, ElevationBundle, Evaporation, HexCoordinates,
-    HigherNeighbours, Humidity, HumidityReceived, HumiditySent, IncomingOverflow, Neighbours,
-    Overflow, OverflowReceived, PendingHumidityRedistribution, Precipitation, Temperature,
+    BedrockElevation, DebugWeatherBundle, DistancesFromVolcano, ElevationBundle, Evaporation,
+    HexCoordinates, HigherNeighbours, Humidity, HumidityReceived, HumiditySent, IncomingOverflow,
+    Neighbours, Overflow, OverflowReceived, PendingHumidityRedistribution, Precipitation,
+    Temperature,
 };
 use ui::{terrain_callback, terrain_details, SelectedTile};
 use weather_systems::{
-    apply_humidity_redistribution, apply_water_overflow, calculate_neighbour_heights_system,
-    evaporation_system, morph_terrain_system, precipitation_system, redistribute_humidity_system,
-    redistribute_overflow_system, update_terrain_assets,
+    apply_humidity_redistribution, apply_vulcanism, apply_water_overflow,
+    calculate_neighbour_heights_system, evaporation_system, morph_terrain_system,
+    precipitation_system, redistribute_humidity_system, redistribute_overflow_system,
+    update_terrain_assets,
 };
 use world::{TileTypeGenerator, WorldAttributes};
 
+// number of epochs to run when pressing enter
 pub const EPOCHS_ON_ENTER: u8 = 10;
 
 /// Describes the orientation and tile size of a hexagon grid.
@@ -43,7 +47,7 @@ pub fn pointy_layout(hex_size: f32) -> HexLayout {
     }
 }
 
-///////////////////////////////// Resources /////////////////////////////////////////
+///////////////////////////////// Debug Resources /////////////////////////////////////////
 ///
 
 #[derive(Debug, Clone, Resource, Default)]
@@ -105,6 +109,7 @@ fn main() {
         // apply effects on neighbours
         .add_system(apply_water_overflow.in_schedule(OnEnter(GameStates::EpochRunning)))
         .add_system(apply_humidity_redistribution.in_schedule(OnEnter(GameStates::EpochRunning)))
+        .add_system(apply_vulcanism.in_schedule(OnEnter(GameStates::EpochRunning)))
         // update terrain assets and map
         .add_system(morph_terrain_system.in_schedule(OnExit(GameStates::EpochRunning)))
         .add_system(update_terrain_assets.in_schedule(OnEnter(GameStates::EpochFinish)))
@@ -122,7 +127,7 @@ fn finish_epoch(mut epochs: ResMut<Epochs>, mut next_state: ResMut<NextState<Gam
     }
 }
 
-// Move the epoch forward on keystroke
+// Move the epoch forward on space bar press
 fn start_epoch(
     mut epochs: ResMut<Epochs>,
     keypress: Res<Input<KeyCode>>,
@@ -165,8 +170,15 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let all_hexes: Vec<Hex> =
         hexx::shapes::hexagon(Hex::ZERO, world.map.map_radius as u32).collect();
 
+    let mut rng = rand::thread_rng();
+    let volcano_hexes: Vec<Hex> = all_hexes
+        .choose_multiple(&mut rng, world.elevation.vulcanism as usize)
+        .cloned()
+        .collect();
+
     // generate altitude and derive temperature from that
-    let altitude_map = map_generation::generate_altitude_map(&world.elevation, &all_hexes);
+    let altitude_map =
+        map_generation::generate_altitude_map(&world.elevation, &all_hexes, &volcano_hexes);
     let temperature_map = map_generation::generate_temperature_map(
         &world.temperature,
         world.map.map_radius,
@@ -233,6 +245,11 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         hex_to_entity.insert(hex, id);
     }
 
+    let distances_to_volcanoes =
+        map_generation::get_distances_from_volcanos(&world.elevation, &volcano_hexes);
+
+    println!("Distances to volcanoes: {:?}", distances_to_volcanoes);
+
     // Populate `Neighbours` component for each entity
     for hex in all_hexes {
         let entity_id = hex_to_entity[&hex];
@@ -246,6 +263,17 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         commands
             .entity(entity_id)
             .insert(Neighbours { ids: neighbour_ids });
+
+            match distances_to_volcanoes.get(&hex) {
+                Some(distances) => {
+                    commands.entity(entity_id).insert(DistancesFromVolcano {
+                    0: distances.to_vec()
+                    });
+                },
+                None => {
+                    continue 
+                }
+            }
     }
 
     // TODO: hex_to_entity isn't currently used

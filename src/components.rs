@@ -50,13 +50,11 @@ pub struct Evaporation {
     pub value: f32,
 }
 
-///////////////////////////////// Components /////////////////////////////////////////
-///
-// Dynamically assigned to entities that have had their tiles changed
+/////////////////// Dynamic Components /////////////////////////////////////////
+// Dynamically assigned to entities to apply weather changes
+
 #[derive(Debug, Clone, Copy, Component, Default)]
 pub struct TileTypeChanged;
-
-//////////////////////////////////// Dynamic Components /////////////////////////////////////////
 
 #[derive(Debug, Clone, Component, Default)]
 pub struct OutgoingOverflow {
@@ -74,6 +72,13 @@ pub struct IncomingOverflow {
 pub struct PendingHumidityRedistribution {
     pub value: f32,
 }
+
+///////////////////////////////////////////////////////////////////////////////
+
+////////////////////////// Components /////////////////////////////////////////
+
+#[derive(Debug, Clone, Component)]
+pub struct DistancesFromVolcano(pub Vec<u16>);
 
 #[derive(Debug, Clone, Component)]
 pub struct HexCoordinates(pub Hex);

@@ -8,6 +8,7 @@ use bevy_mod_picking::prelude::*;
 use crate::components::{
     ElevationBundle, HexCoordinates, HigherNeighbours, Humidity, IncomingOverflow, LowerNeighbours,
     Neighbours, OutgoingOverflow, PendingHumidityRedistribution, Temperature, TileTypeChanged,
+    DistancesFromVolcano
 };
 use crate::terrain::{TileAssets, TileType, WeatherEffects};
 use crate::utils::RandomSelection;
@@ -15,14 +16,14 @@ use crate::world::{
     EcosystemAttributes, ElevationAttributes, ErosionAttributes, MapAttributes,
     TemperatureAttributes,
 };
-use crate::{pointy_layout, DebugWeatherBundle, Epochs, GameStates};
+use crate::{pointy_layout, DebugWeatherBundle, Epochs, GameStates, map_generation};
 
 // TODO: move this to a config file
 pub const SIGMOID_STEEPNESS: f32 = 1.0;
 
 // TODO: move to utils file
 pub fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+    (1.0 / (1.0 + (-x).exp())).min(1.0)
 }
 
 ///////////////////////////////// Terrain Changes /////////////////////////////////////////
@@ -96,6 +97,7 @@ pub fn update_terrain_assets(
 
         let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
 
+        // TODO: is this a bug, or is it intended that we have to remove and re-add the picking components?
         // remove picking components before the update
         commands.entity(entity).remove::<PickableBundle>();
         commands.entity(entity).remove::<RaycastPickTarget>();
@@ -140,7 +142,7 @@ pub fn evaporation_system(
 
         // Ocean tiles are set to produce more evaporation to supply the planet with humidity
         let tile_factor = match tile_type {
-            TileType::Ocean => 4.0,
+            TileType::Ocean => 2.0,
             _ => 1.0,
         };
 
@@ -154,6 +156,7 @@ pub fn evaporation_system(
         assert!(weather.evaporation.value >= 0.0);
         humidity.value += weather.evaporation.value;
 
+        // Oceans don't lose water to evaporation
         let water_lost_to_evaporation = match tile_type {
             TileType::Ocean => 0.0,
             _ => weather.evaporation.value,
@@ -170,25 +173,25 @@ pub fn precipitation_system(
         &TileType,
         &mut ElevationBundle,
     )>,
-    ecosystem_terrain: Res<EcosystemAttributes>,
+    ecosystem_attributes: Res<EcosystemAttributes>,
 ) {
     debug.fn_order.push("precipitation_system".to_string());
     for (humidity, mut weather, tile_type, mut water_level) in query.iter_mut() {
         let tile_factor = match tile_type {
-            TileType::Mountain => 0.9,
-            TileType::Hills | TileType::Rocky => 0.3,
-            TileType::Jungle | TileType::Swamp => 0.2,
-            TileType::Ocean => 0.1,
+            TileType::Mountain => 0.7,
+            TileType::Ocean => 0.5,
+            TileType::Jungle | TileType::Swamp => 0.3,
+            TileType::Hills | TileType::Rocky => 0.2,
             _ => 0.1,
         };
 
         let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
+        println!("precipitation factor: {}", factor);
         let precipitation_increment =
-            factor * humidity.value * tile_factor * ecosystem_terrain.precipitation_factor;
+            factor * humidity.value * tile_factor * ecosystem_attributes.precipitation_factor;
 
         weather.precipitation.value = precipitation_increment;
 
-        // water_level.water.value += tile_type.handle_precipitation(precipitation_increment);
         water_level.water.value += match tile_type {
             TileType::Ocean => 0.0,
             _ => precipitation_increment,
@@ -427,5 +430,30 @@ pub fn apply_water_overflow(
 
         incoming_overflow.water = 0.0;
         incoming_overflow.soil = 0.0;
+    }
+}
+
+pub fn apply_vulcanism(
+    mut debug: ResMut<Epochs>,
+    mut query: Query<(
+        Entity,
+        &mut ElevationBundle,
+        &mut DebugWeatherBundle,
+        &TileType,
+        &DistancesFromVolcano,
+    )>,
+     elevation_attributes: Res<ElevationAttributes>,
+) {
+    debug.fn_order.push("apply_vulcanism".to_string());
+
+    for (entity, mut elevation, mut weather, tile_type, distance_from_volcanos ) in
+        query.iter_mut()
+    {
+        for distance in &distance_from_volcanos.0 {
+            let probability = 1.0 - (*distance as f32 / elevation_attributes.mountain_spread);
+            if rand::random::<f32>() < probability {
+                elevation.bedrock.value += elevation_attributes.epoch_increment;
+            }
+        }
     }
 }

@@ -8,9 +8,9 @@ use crate::world::{ElevationAttributes, TemperatureAttributes};
 pub fn increment_height(
     elevation_attributes: &ElevationAttributes,
     current_height: &mut f32,
-    distance: u32,
+    distance_from_volcano: u16,
 ) {
-    let probability = 1.0 - (distance as f32 / elevation_attributes.mountain_spread);
+    let probability = 1.0 - (distance_from_volcano as f32 / elevation_attributes.mountain_spread);
     if rand::random::<f32>() < probability {
         *current_height += elevation_attributes.elevation_increment;
     }
@@ -19,15 +19,10 @@ pub fn increment_height(
 pub fn generate_altitude_map(
     elevation_attributes: &ElevationAttributes,
     all_hexes: &Vec<Hex>,
+    volcano_hexes: &Vec<Hex>,
 ) -> HashMap<Hex, f32> {
-    let mut rng = rand::thread_rng();
     let mut altitude_map: HashMap<Hex, f32> = all_hexes.iter().map(|hex| (*hex, 0.0)).collect();
-    let volcano_hexes: Vec<Hex> = all_hexes
-        .choose_multiple(&mut rng, elevation_attributes.vulcanism as usize)
-        .cloned()
-        .collect();
-
-    for hex in &volcano_hexes {
+    for hex in volcano_hexes {
         altitude_map.insert(*hex, elevation_attributes.elevation_increment);
     }
 
@@ -35,6 +30,15 @@ pub fn generate_altitude_map(
     altitude_map
 }
 
+/*
+ * This function mutates the altitude map to raise the volcanoes and
+ * surrounding terrain
+ *
+ * the further a tile is from the volcano, the less likely it will have its
+ * terrain raised
+ *
+ * the probability of a tile being raised is 1 - (distance from volcano / mountain spread)")
+ */
 fn raise_volcanoes(
     elevation_attributes: &ElevationAttributes,
     altitude_map: &mut HashMap<Hex, f32>,
@@ -45,8 +49,8 @@ fn raise_volcanoes(
         for hex in volcano_hexes {
             increment_height(elevation_attributes, altitude_map.get_mut(hex).unwrap(), 0);
             max_height = max_height.max(altitude_map[hex]);
-            for rings_traversed in 1..=elevation_attributes.mountain_spread as u32 {
-                for neighbour in hex.ring(rings_traversed) {
+            for rings_traversed in 1..=elevation_attributes.mountain_spread as u16 {
+                for neighbour in hex.ring(rings_traversed as u32) {
                     if let Some(height) = altitude_map.get_mut(&neighbour) {
                         increment_height(elevation_attributes, height, rings_traversed);
                     }
@@ -54,6 +58,29 @@ fn raise_volcanoes(
             }
         }
     }
+}
+
+pub fn get_distances_from_volcanos(
+    elevation_attributes: &ElevationAttributes,
+    volcano_hexes: &Vec<Hex>,
+) -> HashMap<Hex, Vec<u16>> {
+    let mut distances_from_volcanos: HashMap<Hex, Vec<u16>> = HashMap::new();
+
+    for hex in volcano_hexes {
+        distances_from_volcanos.insert(*hex, vec![0]);
+        for rings_traversed in 1..=elevation_attributes.mountain_spread as u16 {
+            for neighbour in hex.ring(rings_traversed as u32) {
+                let mut distances = distances_from_volcanos
+                    .get(&neighbour)
+                    .unwrap_or(&vec![])
+                    .clone();
+                distances.push(rings_traversed);
+                distances_from_volcanos.insert(neighbour, distances.clone());
+            }
+        }
+    }
+
+    return distances_from_volcanos;
 }
 
 pub fn generate_temperature_map(

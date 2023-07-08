@@ -2,8 +2,9 @@ use bevy::prelude::*;
 
 use crate::terrain::TileType;
 use crate::utils::RandomSelection;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct WorldAttributes {
     pub erosion: ErosionAttributes,
     pub elevation: ElevationAttributes,
@@ -47,6 +48,7 @@ pub struct ElevationAttributes {
     pub vulcanism: f32,
     pub mountain_spread: f32,
     pub elevation_increment: f32,
+    pub epoch_increment: f32,
     pub mountain_point: f32,
     pub hill_point: f32,
     pub sea_level: f32,
@@ -60,6 +62,7 @@ impl From<&Config> for ElevationAttributes {
             vulcanism: config.vulcanism,
             mountain_spread: config.mountain_spread * config.map_radius as f32,
             elevation_increment: config.elevation_increment,
+            epoch_increment: config.epoch_increment,
             mountain_point: config.mountain_point,
             hill_point: config.hill_point,
             sea_level: config.sea_level,
@@ -130,6 +133,7 @@ pub struct Config {
     vulcanism: f32,
     mountain_spread: f32,
     elevation_increment: f32,
+    epoch_increment: f32,
     sea_level: f32,
     terrain_change_sensitivity: f32,
     mountain_point: f32,

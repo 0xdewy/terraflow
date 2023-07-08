@@ -37,14 +37,20 @@ const LOW_HUMIDITY: f32 = 0.2;
 const HIGH_WATER: f32 = 0.8;
 const LOW_WATER: f32 = 0.2;
 
-// Returns odds that a tile will change to a different type
+/*
+ * apply weather effects to the terrain
+ * returns an array of possible new terrain options
+ */
 pub trait WeatherEffects: Sized {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)>;
     fn exceeds_limit(&self, tile_type: &TileType) -> bool;
     fn below_limit(&self, tile_type: &TileType) -> bool;
 }
 
-// Humidity
+/*
+ * Humidity weather effects on terrain
+ *
+ */
 impl WeatherEffects for Humidity {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
         let mut probabilities = vec![];
@@ -104,8 +110,10 @@ impl WeatherEffects for Humidity {
     }
 }
 
-// Water change
-// (water_elevation, soil_elevation, terrain_change_sensitivity)
+/*
+ * Groundwater weather effects on terrain_change_sensitivity
+ * (water_elevation, soil_elevation, terrain_change_sensitivity)
+ */
 impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
     fn apply_weather(&self, tile_type: &TileType) -> Vec<(TileType, f32)> {
         if self.exceeds_limit(tile_type) {
@@ -115,14 +123,14 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
                 TileType::Rocky => return vec![(TileType::Dirt, MED_ODDS)],
                 TileType::Dirt => return vec![(TileType::Grass, LOW_ODDS)],
                 TileType::Grass => {
-                    return vec![(TileType::Forest, LOW_ODDS), (TileType::Water, MED_ODDS)]
+                    return vec![(TileType::Forest, MED_ODDS), (TileType::Water, LOW_ODDS)]
                 }
                 TileType::Forest => {
                     return vec![(TileType::Jungle, LOW_ODDS), (TileType::Water, MED_ODDS)]
                 }
-                TileType::Jungle => return vec![(TileType::Swamp, LOW_ODDS)],
-                TileType::Swamp => return vec![(TileType::Water, HIGH_ODDS)],
-                TileType::Hills => return vec![(TileType::Water, MED_ODDS)],
+                TileType::Jungle => return vec![(TileType::Swamp, MED_ODDS)],
+                TileType::Swamp => return vec![(TileType::Water, MED_ODDS)],
+                TileType::Hills => return vec![(TileType::Water, LOW_ODDS)],
                 TileType::Desert => return vec![(TileType::Grass, HIGH_ODDS)],
                 _ => return vec![(*tile_type, CERTAIN)],
             }
@@ -133,6 +141,9 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
                 }
                 TileType::Water => {
                     return vec![(TileType::Swamp, HIGH_ODDS), (TileType::Forest, MED_ODDS)]
+                }
+                TileType::Forest => {
+                    return vec![(TileType::Grass, LOW_ODDS)]
                 }
                 _ => return vec![(*tile_type, CERTAIN)],
             }
