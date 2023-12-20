@@ -94,8 +94,8 @@ fn main() {
             PreStartup,
             (setup_camera, play_tunes, load_tile_assets, setup_grid),
         )
-        .add_systems(Startup, bevy::window::close_on_esc)
         .add_state::<GameStates>()
+        .add_systems(Update, bevy::window::close_on_esc)
         .add_systems(Update, start_epoch)
         .add_systems(Update, make_pickable)
         .add_systems(Update, terrain_details)
@@ -172,7 +172,6 @@ fn make_pickable(
     meshes: Query<Entity, (With<Handle<Mesh>>, Without<Pickable>)>,
 ) {
     for entity in meshes.iter() {
-        println!("making entity {:?} pickable", entity);
         commands
             .entity(entity)
             .insert((PickableBundle::default(), HIGHLIGHT_TINT.clone()));
@@ -231,13 +230,10 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         // spawn tile based on altitude and temperature
         let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
-        // let tile_str = format!("{:?}", tile_type);
-        // let scene = asset_server.load(format!("tiles/{}.gltf#Scene0", tile_str));
-        let scene = asset_server.load("tiles/Forest_Alt.glb#Scene0");
-
-        // hex -> world position
+        let tile_str = format!("{:?}", tile_type);
+        // let scene = asset_server.load(format!("backup/{}.gltf#Scene0", tile_str));
+        let scene = asset_server.load(format!("tiles/{}.glb#Scene0", tile_str));
         let pos = pointy_layout(world.map.hex_size).hex_to_world_pos(hex);
-
         let amount_below_sea_level = (world.elevation.sea_level - altitude).max(0.0);
 
         // create terrain entity
@@ -249,11 +245,6 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
                     ..default()
                 },
                 On::<Pointer<Click>>::run(terrain_callback),
-                /*
-                On::<Pointer<Click>>::target_commands_mut(|click, target_commands| {
-                    println!("click: {:?}", click);
-                }),
-                */
                 ElevationBundle::from(tile_type, altitude, amount_below_sea_level),
                 Humidity::from(tile_type),
                 Temperature { value: temperature },
