@@ -142,9 +142,7 @@ impl WeatherEffects for (&WaterElevation, &SoilElevation, &f32) {
                 TileType::Water => {
                     return vec![(TileType::Swamp, HIGH_ODDS), (TileType::Forest, MED_ODDS)]
                 }
-                TileType::Forest => {
-                    return vec![(TileType::Grass, LOW_ODDS)]
-                }
+                TileType::Forest => return vec![(TileType::Grass, LOW_ODDS)],
                 _ => return vec![(*tile_type, CERTAIN)],
             }
         }

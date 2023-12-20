@@ -14,7 +14,7 @@ use crate::components::{
 use crate::terrain::TileType;
 
 pub fn terrain_callback(
-    In(event): In<ListenedEvent<Click>>,
+    event: Listener<Pointer<Click>>,
     query: Query<(
         Entity,
         &HexCoordinates,
@@ -23,13 +23,15 @@ pub fn terrain_callback(
         &Temperature,
         &TileType,
         &DebugWeatherBundle,
+        &Children,
     )>,
     mut selected_tile: ResMut<SelectedTile>,
-) -> Bubble {
-    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather) in
+) {
+    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather, parent) in
         query.iter()
     {
-        if entity == event.target {
+        if entity == event.listener() {
+            println!("Selected tile: {:?}", entity);
             selected_tile.entity = Some(entity);
             selected_tile.hex_coordinates = Some(hex_coordinates.clone());
             selected_tile.elevation = Some(*elevation);
@@ -45,7 +47,6 @@ pub fn terrain_callback(
             break;
         }
     }
-    Bubble::Up
 }
 
 #[derive(Debug, Clone, Default, Resource)]

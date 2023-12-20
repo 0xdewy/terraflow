@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{math::vec4, prelude::*};
 
 use bevy_basic_camera::{CameraController, CameraControllerPlugin};
 use bevy_mod_picking::prelude::*;
@@ -26,6 +26,7 @@ use components::{
     Neighbours, Overflow, OverflowReceived, PendingHumidityRedistribution, Precipitation,
     Temperature,
 };
+use terrain::TileType;
 use ui::{terrain_callback, terrain_details, SelectedTile};
 use weather_systems::{
     apply_humidity_redistribution, apply_vulcanism, apply_water_overflow,
@@ -41,7 +42,7 @@ pub const EPOCHS_ON_ENTER: u8 = 10;
 /// Describes the orientation and tile size of a hexagon grid.
 pub fn pointy_layout(hex_size: f32) -> HexLayout {
     HexLayout {
-        orientation: HexOrientation::pointy(),
+        orientation: HexOrientation::Pointy,
         hex_size: Vec2::splat(hex_size),
         ..default()
     }
@@ -87,34 +88,40 @@ fn main() {
                 .build()
                 .disable::<DebugPickingPlugin>(),
         )
-        .add_plugin(CameraControllerPlugin)
-        .add_plugin(EguiPlugin)
-        .add_startup_system(setup_camera)
-        .add_startup_system(play_tunes)
-        .add_startup_system(load_tile_assets)
-        .add_startup_system(setup_grid.after(load_tile_assets))
-        .add_system(terrain_details)
-        .add_system(bevy::window::close_on_esc)
+        .add_plugins(CameraControllerPlugin)
+        .add_plugins(EguiPlugin)
+        .add_systems(
+            PreStartup,
+            (setup_camera, play_tunes, load_tile_assets, setup_grid),
+        )
+        .add_systems(Startup, bevy::window::close_on_esc)
         .add_state::<GameStates>()
-        .add_system(start_epoch)
+        .add_systems(Update, start_epoch)
+        .add_systems(Update, make_pickable)
+        .add_systems(Update, terrain_details)
         // initial weather phase
-        .add_system(benchmark::start_benchmark.in_schedule(OnEnter(GameStates::EpochStart)))
-        .add_system(precipitation_system.in_schedule(OnEnter(GameStates::EpochStart)))
-        .add_system(evaporation_system.in_schedule(OnEnter(GameStates::EpochStart)))
-        // .add_system(calculate_overflow_system.in_schedule(OnEnter(GameStates::EpochStart)))
-        .add_system(calculate_neighbour_heights_system.in_schedule(OnEnter(GameStates::EpochStart)))
+        .add_systems(OnEnter(GameStates::EpochStart), benchmark::start_benchmark)
+        .add_systems(OnEnter(GameStates::EpochStart), precipitation_system)
+        .add_systems(OnEnter(GameStates::EpochStart), evaporation_system)
+        .add_systems(
+            OnEnter(GameStates::EpochStart),
+            calculate_neighbour_heights_system,
+        )
         // calculate neighbour effects
-        .add_system(redistribute_humidity_system.in_schedule(OnExit(GameStates::EpochStart)))
-        .add_system(redistribute_overflow_system.in_schedule(OnExit(GameStates::EpochStart)))
+        .add_systems(OnExit(GameStates::EpochStart), redistribute_humidity_system)
+        .add_systems(OnExit(GameStates::EpochStart), redistribute_overflow_system)
         // apply effects on neighbours
-        .add_system(apply_water_overflow.in_schedule(OnEnter(GameStates::EpochRunning)))
-        .add_system(apply_humidity_redistribution.in_schedule(OnEnter(GameStates::EpochRunning)))
-        .add_system(apply_vulcanism.in_schedule(OnEnter(GameStates::EpochRunning)))
+        .add_systems(OnEnter(GameStates::EpochRunning), apply_water_overflow)
+        .add_systems(
+            OnEnter(GameStates::EpochRunning),
+            apply_humidity_redistribution,
+        )
+        .add_systems(OnEnter(GameStates::EpochRunning), apply_vulcanism)
         // update terrain assets and map
-        .add_system(morph_terrain_system.in_schedule(OnExit(GameStates::EpochRunning)))
-        .add_system(update_terrain_assets.in_schedule(OnEnter(GameStates::EpochFinish)))
-        .add_system(finish_epoch.in_schedule(OnExit(GameStates::EpochFinish)))
-        .add_system(benchmark::end_benchmark.in_schedule(OnExit(GameStates::EpochFinish)))
+        .add_systems(OnExit(GameStates::EpochRunning), morph_terrain_system)
+        .add_systems(OnEnter(GameStates::EpochFinish), update_terrain_assets)
+        .add_systems(OnExit(GameStates::EpochFinish), finish_epoch)
+        .add_systems(OnExit(GameStates::EpochFinish), benchmark::end_benchmark)
         .run();
 }
 
@@ -159,12 +166,42 @@ fn load_tile_assets(asset_server: Res<AssetServer>, mut commands: Commands) {
     commands.insert_resource(tile_assets);
 }
 
+/// Makes everything in the scene with a mesh pickable
+fn make_pickable(
+    mut commands: Commands,
+    meshes: Query<Entity, (With<Handle<Mesh>>, Without<Pickable>)>,
+) {
+    for entity in meshes.iter() {
+        println!("making entity {:?} pickable", entity);
+        commands
+            .entity(entity)
+            .insert((PickableBundle::default(), HIGHLIGHT_TINT.clone()));
+    }
+}
+
+/// Used to tint the mesh instead of simply replacing the mesh's material with a single color. See
+/// `tinted_highlight` for more details.
+const HIGHLIGHT_TINT: Highlight<StandardMaterial> = Highlight {
+    hovered: Some(HighlightKind::new_dynamic(|matl| StandardMaterial {
+        base_color: matl.base_color + vec4(-0.5, -0.3, 0.9, 0.8), // hovered is blue
+        ..matl.to_owned()
+    })),
+    pressed: Some(HighlightKind::new_dynamic(|matl| StandardMaterial {
+        base_color: matl.base_color + vec4(-0.4, -0.4, 0.8, 0.8), // pressed is a different blue
+        ..matl.to_owned()
+    })),
+    selected: Some(HighlightKind::new_dynamic(|matl| StandardMaterial {
+        base_color: matl.base_color + vec4(-0.4, 0.8, -0.4, 0.0), // selected is green
+        ..matl.to_owned()
+    })),
+};
+
 /// Hex grid setup
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let world = WorldAttributes::load();
 
     // load all gltf files from assets folder
-    let tile_assets = terrain::TileAssets::new(&asset_server);
+    // let tile_assets = terrain::TileAssets::new(&asset_server);
 
     // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> =
@@ -194,7 +231,9 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         // spawn tile based on altitude and temperature
         let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
-        let (mesh_handle, material_handle) = tile_assets.get_mesh_and_material(&tile_type);
+        // let tile_str = format!("{:?}", tile_type);
+        // let scene = asset_server.load(format!("tiles/{}.gltf#Scene0", tile_str));
+        let scene = asset_server.load("tiles/Forest_Alt.glb#Scene0");
 
         // hex -> world position
         let pos = pointy_layout(world.map.hex_size).hex_to_world_pos(hex);
@@ -204,16 +243,17 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
         // create terrain entity
         let id = commands
             .spawn((
-                PbrBundle {
-                    transform: Transform::from_xyz(pos.x, altitude, pos.y)
-                        .with_scale(Vec3::splat(2.0)),
-                    mesh: mesh_handle,
-                    material: material_handle,
+                SceneBundle {
+                    transform: Transform::from_xyz(pos.x, 0.0, pos.y).with_scale(Vec3::splat(2.0)),
+                    scene,
                     ..default()
                 },
-                PickableBundle::default(),    // <- Makes the mesh pickable.
-                RaycastPickTarget::default(), // <- Needed for the raycast backend.
-                OnPointer::<Click>::run_callback(terrain_callback),
+                On::<Pointer<Click>>::run(terrain_callback),
+                /*
+                On::<Pointer<Click>>::target_commands_mut(|click, target_commands| {
+                    println!("click: {:?}", click);
+                }),
+                */
                 ElevationBundle::from(tile_type, altitude, amount_below_sea_level),
                 Humidity::from(tile_type),
                 Temperature { value: temperature },
@@ -248,8 +288,6 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let distances_to_volcanoes =
         map_generation::get_distances_from_volcanos(&world.elevation, &volcano_hexes);
 
-    println!("Distances to volcanoes: {:?}", distances_to_volcanoes);
-
     // Populate `Neighbours` component for each entity
     for hex in all_hexes {
         let entity_id = hex_to_entity[&hex];
@@ -264,16 +302,14 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
             .entity(entity_id)
             .insert(Neighbours { ids: neighbour_ids });
 
-            match distances_to_volcanoes.get(&hex) {
-                Some(distances) => {
-                    commands.entity(entity_id).insert(DistancesFromVolcano {
-                    0: distances.to_vec()
-                    });
-                },
-                None => {
-                    continue 
-                }
+        match distances_to_volcanoes.get(&hex) {
+            Some(distances) => {
+                commands.entity(entity_id).insert(DistancesFromVolcano {
+                    0: distances.to_vec(),
+                });
             }
+            None => continue,
+        }
     }
 
     // TODO: hex_to_entity isn't currently used
@@ -297,7 +333,6 @@ fn setup_camera(mut commands: Commands) {
             transform,
             ..default()
         },
-        RaycastPickCamera::default(), // <- Enable picking for this camera
         CameraController {
             orbit_mode: true,
             walk_speed: 50.0,
@@ -314,7 +349,15 @@ fn setup_camera(mut commands: Commands) {
 }
 
 //////////////////////////////Music//////////////////////////////
-fn play_tunes(asset_server: Res<AssetServer>, audio: Res<Audio>) {
-    let music = asset_server.load("music/ganymede_orbiter.wav");
-    audio.play(music);
+#[derive(Component)]
+struct MyMusic;
+
+fn play_tunes(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        AudioBundle {
+            source: asset_server.load("music/ganymede_orbiter.wav"),
+            settings: PlaybackSettings::default(),
+        },
+        MyMusic,
+    ));
 }

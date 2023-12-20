@@ -1,6 +1,6 @@
 {
 	"asset":{
-		"generator":"Khronos glTF Blender I/O v3.5.30",
+		"generator":"Khronos glTF Blender I/O v3.6.27",
 		"version":"2.0"
 	},
 	"extensionsUsed":[
@@ -21,9 +21,9 @@
 			"mesh":0,
 			"name":"10 Forest",
 			"translation":[
-				9,
-				0,
-				0
+				6.098484039306641,
+				3.2276511192321777,
+				2.591048240661621
 			]
 		}
 	],
@@ -75,8 +75,8 @@
 				{
 					"attributes":{
 						"POSITION":0,
-						"TEXCOORD_0":1,
-						"NORMAL":2
+						"NORMAL":1,
+						"TEXCOORD_0":2
 					},
 					"indices":3,
 					"material":0
@@ -84,19 +84,10 @@
 				{
 					"attributes":{
 						"POSITION":4,
-						"TEXCOORD_0":5,
-						"NORMAL":6
+						"NORMAL":5,
+						"TEXCOORD_0":6
 					},
 					"indices":7,
-					"material":1
-				},
-				{
-					"attributes":{
-						"POSITION":8,
-						"TEXCOORD_0":9,
-						"NORMAL":10
-					},
-					"indices":11,
 					"material":1
 				}
 			]
@@ -153,13 +144,13 @@
 			"bufferView":1,
 			"componentType":5126,
 			"count":54,
-			"type":"VEC2"
+			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
 			"count":54,
-			"type":"VEC3"
+			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
@@ -170,7 +161,7 @@
 		{
 			"bufferView":4,
 			"componentType":5126,
-			"count":54,
+			"count":150,
 			"max":[
 				0.711769163608551,
 				1.024999976158142,
@@ -178,7 +169,7 @@
 			],
 			"min":[
 				-0.6987266540527344,
-				0.1518317461013794,
+				0.0395410880446434,
 				-0.5341107249259949
 			],
 			"type":"VEC3"
@@ -186,53 +177,19 @@
 		{
 			"bufferView":5,
 			"componentType":5126,
-			"count":54,
-			"type":"VEC2"
+			"count":150,
+			"type":"VEC3"
 		},
 		{
 			"bufferView":6,
 			"componentType":5126,
-			"count":54,
-			"type":"VEC3"
+			"count":150,
+			"type":"VEC2"
 		},
 		{
 			"bufferView":7,
 			"componentType":5123,
-			"count":54,
-			"type":"SCALAR"
-		},
-		{
-			"bufferView":8,
-			"componentType":5126,
-			"count":96,
-			"max":[
-				0.4692820906639099,
-				0.2970000207424164,
-				0.4752815067768097
-			],
-			"min":[
-				-0.5106626749038696,
-				0.0395410880446434,
-				-0.31695300340652466
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":9,
-			"componentType":5126,
-			"count":96,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":10,
-			"componentType":5126,
-			"count":96,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":11,
-			"componentType":5123,
-			"count":156,
+			"count":210,
 			"type":"SCALAR"
 		}
 	],
@@ -245,14 +202,14 @@
 		},
 		{
 			"buffer":0,
-			"byteLength":432,
+			"byteLength":648,
 			"byteOffset":648,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":648,
-			"byteOffset":1080,
+			"byteLength":432,
+			"byteOffset":1296,
 			"target":34962
 		},
 		{
@@ -263,50 +220,26 @@
 		},
 		{
 			"buffer":0,
-			"byteLength":648,
+			"byteLength":1800,
 			"byteOffset":1920,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":432,
-			"byteOffset":2568,
+			"byteLength":1800,
+			"byteOffset":3720,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":648,
-			"byteOffset":3000,
+			"byteLength":1200,
+			"byteOffset":5520,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":108,
-			"byteOffset":3648,
-			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":1152,
-			"byteOffset":3756,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":768,
-			"byteOffset":4908,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":1152,
-			"byteOffset":5676,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":312,
-			"byteOffset":6828,
+			"byteLength":420,
+			"byteOffset":6720,
 			"target":34963
 		}
 	],

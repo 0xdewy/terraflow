@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::terrain::TileType;
 use crate::utils::RandomSelection;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct WorldAttributes {

@@ -1,6 +1,6 @@
 {
     "hex_size": 2.0,
-    "map_radius": 100,
+    "map_radius": 2,
     "vulcanism": 50,
     "erosion_factor": 0.0005,
     "precipitation_factor": 0.03,

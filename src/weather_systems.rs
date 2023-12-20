@@ -6,9 +6,9 @@ use bevy::transform::commands;
 use bevy_mod_picking::prelude::*;
 
 use crate::components::{
-    ElevationBundle, HexCoordinates, HigherNeighbours, Humidity, IncomingOverflow, LowerNeighbours,
-    Neighbours, OutgoingOverflow, PendingHumidityRedistribution, Temperature, TileTypeChanged,
-    DistancesFromVolcano
+    DistancesFromVolcano, ElevationBundle, HexCoordinates, HigherNeighbours, Humidity,
+    IncomingOverflow, LowerNeighbours, Neighbours, OutgoingOverflow, PendingHumidityRedistribution,
+    Temperature, TileTypeChanged,
 };
 use crate::terrain::{TileAssets, TileType, WeatherEffects};
 use crate::utils::RandomSelection;
@@ -16,7 +16,7 @@ use crate::world::{
     EcosystemAttributes, ElevationAttributes, ErosionAttributes, MapAttributes,
     TemperatureAttributes,
 };
-use crate::{pointy_layout, DebugWeatherBundle, Epochs, GameStates, map_generation};
+use crate::{map_generation, pointy_layout, DebugWeatherBundle, Epochs, GameStates};
 
 // TODO: move this to a config file
 pub const SIGMOID_STEEPNESS: f32 = 1.0;
@@ -100,17 +100,15 @@ pub fn update_terrain_assets(
         // TODO: is this a bug, or is it intended that we have to remove and re-add the picking components?
         // remove picking components before the update
         commands.entity(entity).remove::<PickableBundle>();
-        commands.entity(entity).remove::<RaycastPickTarget>();
 
         // update entity with new mesh, material and transform
-        *transform = Transform::from_xyz(world_pos.x, total_height, world_pos.y)
-            .with_scale(Vec3::splat(2.0));
+        *transform =
+            Transform::from_xyz(world_pos.x, 0.0, world_pos.y).with_scale(Vec3::splat(2.0));
         *mesh_handle = new_mesh_handle;
         *material_handle = new_material_handle;
 
         // add back picking components after the update
         commands.entity(entity).insert(PickableBundle::default());
-        commands.entity(entity).insert(RaycastPickTarget::default());
 
         commands.entity(entity).remove::<TileTypeChanged>();
     }
@@ -186,7 +184,6 @@ pub fn precipitation_system(
         };
 
         let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
-        println!("precipitation factor: {}", factor);
         let precipitation_increment =
             factor * humidity.value * tile_factor * ecosystem_attributes.precipitation_factor;
 
@@ -442,12 +439,11 @@ pub fn apply_vulcanism(
         &TileType,
         &DistancesFromVolcano,
     )>,
-     elevation_attributes: Res<ElevationAttributes>,
+    elevation_attributes: Res<ElevationAttributes>,
 ) {
     debug.fn_order.push("apply_vulcanism".to_string());
 
-    for (entity, mut elevation, mut weather, tile_type, distance_from_volcanos ) in
-        query.iter_mut()
+    for (entity, mut elevation, mut weather, tile_type, distance_from_volcanos) in query.iter_mut()
     {
         for distance in &distance_from_volcanos.0 {
             let probability = 1.0 - (*distance as f32 / elevation_attributes.mountain_spread);
