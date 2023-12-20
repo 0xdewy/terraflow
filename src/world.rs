@@ -157,27 +157,25 @@ impl TileTypeGenerator for WorldAttributes {
     // TODO: add more tile types and refactor this
     fn spawn_tile(&self, _latitude: f32, altitude: f32, temperature: f32) -> TileType {
         let cool_tiles: Vec<(TileType, f32)> = vec![
-            (TileType::Grass, 0.4),
-            (TileType::Forest, 0.3),
+            (TileType::Grass, 0.5),
+            (TileType::Forest, 0.5),
             (TileType::Water, 0.2),
-            (TileType::Dirt, 0.2),
-            (TileType::Hills, 0.1),
-            (TileType::Rocky, 0.2),
-            (TileType::Waste, 0.1),
-            (TileType::Swamp, 0.1),
+            (TileType::Dirt, 0.1),
+            (TileType::Hills, 0.2),
+            (TileType::Rocky, 0.1),
+            // (TileType::Swamp, 0.1),
             (TileType::Jungle, 0.1),
         ];
 
         let hot_tiles: Vec<(TileType, f32)> = vec![
-            (TileType::Jungle, 0.5),
+            (TileType::Jungle, 0.7),
             (TileType::Desert, 0.3),
-            (TileType::Swamp, 0.3),
-            (TileType::Dirt, 0.2),
-            (TileType::Rocky, 0.3),
-            (TileType::Waste, 0.1),
-            (TileType::Forest, 0.1),
-            (TileType::Grass, 0.1),
-            (TileType::Water, 0.1),
+            (TileType::Forest, 0.2),
+            // (TileType::Swamp, 0.3),
+            (TileType::Grass, 0.2),
+            (TileType::Water, 0.2),
+            (TileType::Dirt, 0.1),
+            (TileType::Rocky, 0.1),
         ];
 
         match temperature {
