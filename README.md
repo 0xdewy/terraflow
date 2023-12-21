@@ -2,8 +2,7 @@
 
 Terraflow is a basic weather simulation built with Bevy. The idea of the game is to control the weather to terraform different planets.
 
-![Terraflow](https://github.com/0xdewy/terraflow-bevy/Terraflow.png)
-![Weather](https://github.com/0xdewy/terraflow-bevy/TerraflowDetails.png)
+![Terraflow](./TerraflowDetails.png)
 
 ## World Generation
 
