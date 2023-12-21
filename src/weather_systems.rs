@@ -1,22 +1,22 @@
-use core::panic;
+
 
 use bevy::prelude::*;
 
-use bevy::transform::commands;
-use bevy_mod_picking::prelude::*;
+
+
 
 use crate::components::{
     DistancesFromVolcano, ElevationBundle, HexCoordinates, HigherNeighbours, Humidity,
-    IncomingOverflow, LowerNeighbours, Neighbours, OutgoingOverflow, PendingHumidityRedistribution,
+    IncomingOverflow, LowerNeighbours, Neighbours, PendingHumidityRedistribution,
     Temperature, TileTypeChanged,
 };
-use crate::terrain::{TileAssets, TileType, WeatherEffects};
+use crate::terrain::{TileType, WeatherEffects, TileAssets};
 use crate::utils::RandomSelection;
 use crate::world::{
     EcosystemAttributes, ElevationAttributes, ErosionAttributes, MapAttributes,
     TemperatureAttributes,
 };
-use crate::{map_generation, pointy_layout, DebugWeatherBundle, Epochs, GameStates};
+use crate::{pointy_layout, DebugWeatherBundle, Epochs, GameStates};
 
 // TODO: move this to a config file
 pub const SIGMOID_STEEPNESS: f32 = 1.0;
@@ -59,6 +59,7 @@ pub fn morph_terrain_system(
     }
 }
 
+// TODO: store gltf handles in a resource
 pub fn update_terrain_assets(
     mut debug: ResMut<Epochs>,
     mut commands: Commands,
@@ -66,15 +67,12 @@ pub fn update_terrain_assets(
         Entity,
         &TileType,
         &HexCoordinates,
-        &ElevationBundle,
         &mut Transform,
-        &mut Handle<Mesh>,
-        &mut Handle<StandardMaterial>,
+        &mut Handle<Scene>,
         &TileTypeChanged,
     )>,
     tile_assets: Res<TileAssets>,
     mut next_state: ResMut<NextState<GameStates>>,
-    elevation_attributes: Res<ElevationAttributes>,
     map_attributes: Res<MapAttributes>,
 ) {
     debug.fn_order.push("update_terrain_assets".to_string());
@@ -82,34 +80,18 @@ pub fn update_terrain_assets(
         entity,
         tile_type,
         hex,
-        altitude,
         mut transform,
-        mut mesh_handle,
-        mut material_handle,
+        mut scene_bundle,
         _,
     ) in query.iter_mut()
     {
         let world_pos = pointy_layout(map_attributes.hex_size).hex_to_world_pos(hex.0);
-
-        let total_height = altitude.bedrock.value
-            + ((altitude.soil.value + altitude.water.value)
-                * elevation_attributes.soil_and_water_height_display_factor);
-
-        let (new_mesh_handle, new_material_handle) = tile_assets.get_mesh_and_material(tile_type);
-
-        // TODO: is this a bug, or is it intended that we have to remove and re-add the picking components?
-        // remove picking components before the update
-        commands.entity(entity).remove::<PickableBundle>();
-
         // update entity with new mesh, material and transform
+        let scene = tile_assets.get_scene_handle(*tile_type).unwrap();
         *transform =
             Transform::from_xyz(world_pos.x, 0.0, world_pos.y).with_scale(Vec3::splat(2.0));
-        *mesh_handle = new_mesh_handle;
-        *material_handle = new_material_handle;
-
+        *scene_bundle = scene.clone();
         // add back picking components after the update
-        commands.entity(entity).insert(PickableBundle::default());
-
         commands.entity(entity).remove::<TileTypeChanged>();
     }
 
@@ -159,7 +141,7 @@ pub fn evaporation_system(
             TileType::Ocean => 0.0,
             _ => weather.evaporation.value,
         };
-        elevation.water.value = elevation.water.value - water_lost_to_evaporation.max(0.0);
+        elevation.water.value -= water_lost_to_evaporation.max(0.0);
     }
 }
 
@@ -236,11 +218,11 @@ pub fn calculate_neighbour_heights_system(
             }
         }
 
-        if higher_neighbours.ids.len() > 0 {
+        if !higher_neighbours.ids.is_empty() {
             commands.entity(entity).insert(higher_neighbours);
         }
 
-        if lower_neighbours.ids.len() > 0 {
+        if !lower_neighbours.ids.is_empty() {
             commands.entity(entity).insert(lower_neighbours);
         }
     }
@@ -253,7 +235,7 @@ pub fn calculate_neighbour_heights_system(
 
 pub fn redistribute_humidity_system(
     mut debug: ResMut<Epochs>,
-    mut commands: Commands,
+    _commands: Commands,
     mut query: Query<(
         Entity,
         &mut Humidity,
@@ -268,7 +250,7 @@ pub fn redistribute_humidity_system(
         .fn_order
         .push("redistribute_humidity_system".to_string());
 
-    for (_entity, mut humidity, mut weather, tile_type, higher_neighbours) in query.iter_mut() {
+    for (_entity, mut humidity, mut weather, _tile_type, higher_neighbours) in query.iter_mut() {
         let num_higher_neighbours = higher_neighbours.ids.len() as f32;
         let factor = sigmoid(SIGMOID_STEEPNESS * (humidity.value - 1.0));
         let humidity_to_escape = humidity.value * factor * ecosystem.humidity_escape_factor;
@@ -282,12 +264,8 @@ pub fn redistribute_humidity_system(
                 continue;
             }
 
-            incoming_humidity_query
-                .get_mut(neighbour_id)
-                .ok()
-                .map(|mut incoming_humidity| {
-                    incoming_humidity.value += humidity_for_neighbour;
-                });
+            if let Ok(mut incoming_humidity) = incoming_humidity_query
+                .get_mut(neighbour_id) { incoming_humidity.value += humidity_for_neighbour; }
         }
         humidity.value = (humidity.value - humidity_to_escape).max(0.0);
         weather.humidity_sent.value = humidity_to_escape;
@@ -300,7 +278,7 @@ pub fn redistribute_humidity_system(
 
 pub fn apply_humidity_redistribution(
     mut debug: ResMut<Epochs>,
-    mut commands: Commands,
+    _commands: Commands,
     mut query: Query<(
         Entity,
         &mut Humidity,
@@ -312,7 +290,7 @@ pub fn apply_humidity_redistribution(
     debug
         .fn_order
         .push("apply_humidity_redistribution".to_string());
-    for (entity, mut humidity, mut weather, mut redistribution) in query.iter_mut() {
+    for (_entity, mut humidity, mut weather, mut redistribution) in query.iter_mut() {
         humidity.value += redistribution.value;
 
         weather.humidity_received.value = redistribution.value;
@@ -345,7 +323,7 @@ pub fn redistribute_overflow_system(
     // Create a component for each lower neighbour, containing their share of the overflow
     for (entity, mut elevation, lower_neighbours, tiletype, mut weather) in query.iter_mut() {
         // if there is an altitude difference, but no lower neighbours, something is wrong
-        assert!(lower_neighbours.ids.len() > 0);
+        assert!(!lower_neighbours.ids.is_empty());
 
         let overflow_factor = sigmoid(SIGMOID_STEEPNESS * (elevation.water.value - 1.0));
         // Nothing is lower than oceans so they don't overflow
@@ -406,7 +384,7 @@ pub fn apply_water_overflow(
 ) {
     debug.fn_order.push("apply_water_overflow".to_string());
 
-    for (entity, mut elevation, mut incoming_overflow, tile_type, mut weather) in query.iter_mut() {
+    for (_entity, mut elevation, mut incoming_overflow, tile_type, mut weather) in query.iter_mut() {
         if incoming_overflow.water == 0.0 {
             incoming_overflow.soil = 0.0;
             continue;
@@ -443,7 +421,7 @@ pub fn apply_vulcanism(
 ) {
     debug.fn_order.push("apply_vulcanism".to_string());
 
-    for (entity, mut elevation, mut weather, tile_type, distance_from_volcanos) in query.iter_mut()
+    for (_entity, mut elevation, _weather, _tile_type, distance_from_volcanos) in query.iter_mut()
     {
         for distance in &distance_from_volcanos.0 {
             let probability = 1.0 - (*distance as f32 / elevation_attributes.mountain_spread);

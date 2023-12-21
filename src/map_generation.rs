@@ -1,4 +1,4 @@
-use rand::prelude::SliceRandom;
+
 use std::collections::HashMap;
 
 use hexx::Hex;
@@ -26,7 +26,7 @@ pub fn generate_altitude_map(
         altitude_map.insert(*hex, elevation_attributes.elevation_increment);
     }
 
-    raise_volcanoes(elevation_attributes, &mut altitude_map, &volcano_hexes);
+    raise_volcanoes(elevation_attributes, &mut altitude_map, volcano_hexes);
     altitude_map
 }
 
@@ -80,7 +80,7 @@ pub fn get_distances_from_volcanos(
         }
     }
 
-    return distances_from_volcanos;
+    distances_from_volcanos
 }
 
 pub fn generate_temperature_map(

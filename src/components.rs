@@ -206,7 +206,7 @@ pub struct LowerNeighbours {
 
 impl fmt::Display for Epochs {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Epochs: {} \n", self.epochs)?;
+        writeln!(f, "Epochs: {} ", self.epochs)?;
         write!(f, "Epochs left: {:?}", self.epochs_to_run)
     }
 }

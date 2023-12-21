@@ -27,7 +27,7 @@ pub fn terrain_callback(
     )>,
     mut selected_tile: ResMut<SelectedTile>,
 ) {
-    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather, parent) in
+    for (entity, hex_coordinates, elevation, humidity, temperature, tile_type, weather, _parent) in
         query.iter()
     {
         if entity == event.listener() {

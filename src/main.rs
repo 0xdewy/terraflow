@@ -22,11 +22,11 @@ mod world;
 
 use components::{
     BedrockElevation, DebugWeatherBundle, DistancesFromVolcano, ElevationBundle, Evaporation,
-    HexCoordinates, HigherNeighbours, Humidity, HumidityReceived, HumiditySent, IncomingOverflow,
+    HexCoordinates, Humidity, HumidityReceived, HumiditySent, IncomingOverflow,
     Neighbours, Overflow, OverflowReceived, PendingHumidityRedistribution, Precipitation,
     Temperature,
 };
-use terrain::TileType;
+
 use ui::{terrain_callback, terrain_details, SelectedTile};
 use weather_systems::{
     apply_humidity_redistribution, apply_vulcanism, apply_water_overflow,
@@ -199,9 +199,6 @@ const HIGHLIGHT_TINT: Highlight<StandardMaterial> = Highlight {
 fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
     let world = WorldAttributes::load();
 
-    // load all gltf files from assets folder
-    // let tile_assets = terrain::TileAssets::new(&asset_server);
-
     // use hexx lib to generate hexagon shaped map of hexagons
     let all_hexes: Vec<Hex> =
         hexx::shapes::hexagon(Hex::ZERO, world.map.map_radius as u32).collect();
@@ -223,6 +220,8 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     let mut hex_to_entity = HashMap::new();
 
+    let tile_assets = terrain::TileAssets::new(&asset_server);
+
     // Spawn tiles
     for hex in all_hexes.clone() {
         let altitude = *altitude_map.get(&hex).unwrap();
@@ -230,9 +229,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         // spawn tile based on altitude and temperature
         let tile_type = world.spawn_tile(hex.y as f32, altitude, temperature);
-        let tile_str = format!("{:?}", tile_type);
-        // let scene = asset_server.load(format!("backup/{}.gltf#Scene0", tile_str));
-        let scene = asset_server.load(format!("tiles/{}.glb#Scene0", tile_str));
+        let scene = tile_assets.get_scene_handle(tile_type).unwrap();
         let pos = pointy_layout(world.map.hex_size).hex_to_world_pos(hex);
         let amount_below_sea_level = (world.elevation.sea_level - altitude).max(0.0);
 
@@ -241,7 +238,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
             .spawn((
                 SceneBundle {
                     transform: Transform::from_xyz(pos.x, 0.0, pos.y).with_scale(Vec3::splat(2.0)),
-                    scene,
+                    scene: scene.clone(),
                     ..default()
                 },
                 On::<Pointer<Click>>::run(terrain_callback),
@@ -295,9 +292,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
         match distances_to_volcanoes.get(&hex) {
             Some(distances) => {
-                commands.entity(entity_id).insert(DistancesFromVolcano {
-                    0: distances.to_vec(),
-                });
+                commands.entity(entity_id).insert(DistancesFromVolcano(distances.to_vec()));
             }
             None => continue,
         }
@@ -305,6 +300,7 @@ fn setup_grid(asset_server: Res<AssetServer>, mut commands: Commands) {
 
     // TODO: hex_to_entity isn't currently used
     commands.insert_resource(HexToEntity(hex_to_entity.clone()));
+    commands.insert_resource(tile_assets);
 
     // World Attributes
     commands.insert_resource(world.elevation); // ElevationAttributes
